@@ -26,26 +26,53 @@ The script will:
 * **Test session initialization** and execution.
 * **Answer submission** in the correct order.
 * Fetch **final results** and display statistics.
+* **Web UI** for easy interaction with the solver.
 
 ***
 
 ### Usage
 
+#### Running the Python Script
+
 1.  **Clone the repository:**
-    ```bash
+    \`\`\`bash
     git clone https://github.com/OrlandoBlyat/EasyPLU-Solver.git
     cd EasyPLU-Solver
-    ```
+    \`\`\`
 2.  **Run the script:**
    
-    ```bash
+    \`\`\`bash
     python web.py
-    ```
-4.  Enter your EasyPLU login credentials when prompted.
+    \`\`\`
+3.  Enter your EasyPLU login credentials when prompted.
+
+#### Running the Web UI
+
+1.  **Install dependencies:**
+    \`\`\`bash
+    npm install
+    \`\`\`
+
+2.  **Start the development server:**
+    \`\`\`bash
+    npm run dev
+    \`\`\`
+
+3.  **Open your browser:**
+    Navigate to `http://localhost:3000`
+
+4.  **Enter your credentials:**
+    - Uporabniško ime (e-naslov): Your EasyPLU email
+    - Geslo: Your EasyPLU password
+    - Optional: Check "Rezultat po meri" to set a custom target score percentage
+
+5.  **Click "easyPLU"** to start the automated test session.
 
 ***
 
 ### Dependencies
+
+#### Python Dependencies
 
 The script uses the following Python packages:
 
@@ -54,6 +81,15 @@ The script uses the following Python packages:
 * `tqdm` (for progress display)
 
 The script will check if dependencies are installed and prompt you to install missing packages automatically.
+
+#### Web UI Dependencies
+
+The web interface is built with:
+
+* Next.js
+* React
+* TypeScript
+* Tailwind CSS
 
 ***
 
