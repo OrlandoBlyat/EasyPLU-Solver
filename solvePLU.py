@@ -1,8 +1,14 @@
 import sys
 import subprocess
+import random
+import sqlite3
+import requests
+import os
+import time
+import getpass
+from tqdm import tqdm
 
 required_packages = ["requests", "tqdm"]
-
 for pkg in required_packages:
     try:
         __import__(pkg)
@@ -14,20 +20,8 @@ for pkg in required_packages:
             print(f"Cannot continue without '{pkg}'. Exiting.")
             sys.exit(1)
 
-import os
-import sqlite3
-import requests
-from tqdm import tqdm
-import time
-import getpass
-
-EMAIL = input("Enter your email: ")
-PASSWORD = getpass.getpass("Enter your password: ")
-
 BASE_URL = "https://easy-plu.knowledge-hero.com/api/plu"
-
 LOGIN_URL = f"{BASE_URL}/login"
-PRODUCT_CATEGORIES_URL = f"{BASE_URL}/plu-learn/product-categories"
 CREATE_SESSION_URL = f"{BASE_URL}/plu-learn/create-new-session"
 EXECUTION_ITEMS_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{session_id}}/execution-items"
 START_EXECUTION_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{session_id}}/start-execution"
@@ -37,42 +31,23 @@ RESULT_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{session_id}}/result"
 DB_FILE = "plu_items.db"
 session = requests.Session()
 
+USE_HARD_VAL = False
+if USE_HARD_VAL:
+    EMAIL = "nuuh@maybe.com"
+    PASSWORD = "youthoughpahahhahaha"
+else: 
+    EMAIL = input("Enter your email: ")
+    PASSWORD = getpass.getpass("Enter your password: ")
+
 def login():
     payload = {"email": EMAIL, "password": PASSWORD}
     r = session.post(LOGIN_URL, json=payload)
-    print("Login status:", r.status_code)
     r.raise_for_status()
-
-    try:
-        data = r.json()
-    except Exception as e:
-        raise Exception(f"Failed to parse login response as JSON: {r.text}") from e
-
+    data = r.json()
     token = data.get("api_token")
-    user_id = None
-
-    if "user" in data and "id" in data["user"]:
-        user_id = data["user"]["id"]
-    elif "id" in data:
-        user_id = data["id"]
-
-    if not token:
-        raise Exception(f"Login failed: no api_token found.\nFull response: {data}")
-    if not user_id:
-        raise Exception(f"Login succeeded but user_id not found.\nFull response: {data}")
-
-    session.headers.update({
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json"
-    })
-    print("Login successful. User ID:", user_id)
+    user_id = data.get("user", {}).get("id") or data.get("id")
+    session.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json"})
     return user_id
-
-def preload_categories(user_id):
-    payload = {"user_id": user_id, "baseline_test": False}
-    r = session.post(PRODUCT_CATEGORIES_URL, json=payload)
-    r.raise_for_status()
-    print("Product categories preloaded.")
 
 def create_session(execution_type, user_id):
     payload = {
@@ -91,15 +66,7 @@ def create_session(execution_type, user_id):
     }
     r = session.post(CREATE_SESSION_URL, json=payload)
     r.raise_for_status()
-    resp_json = r.json()
-    session_id = resp_json.get("data", {}).get("session_id")
-    start_time = resp_json.get("data", {}).get("session", {}).get("created_at")
-    if not session_id:
-        raise Exception("Could not find session_id in response.")
-    print(f"\nNew session created.")
-    print(f"  Session ID   : {session_id}")
-    print(f"  Start time   : {start_time}\n")
-    return session_id
+    return r.json()["data"]["session_id"]
 
 def fetch_execution_items(session_id, execution_type=1):
     url = EXECUTION_ITEMS_URL_TEMPLATE.format(session_id=session_id)
@@ -125,9 +92,7 @@ def init_db():
 
 def store_all_plus_if_needed(user_id):
     if os.path.exists(DB_FILE):
-        print("Database exists, skipping PLU fetch.")
         return
-    print("No database found. Fetching all PLUs...")
     conn = init_db()
     c = conn.cursor()
     session_id = create_session(execution_type=1, user_id=user_id)
@@ -148,13 +113,10 @@ def store_all_plus_if_needed(user_id):
         ))
     conn.commit()
     conn.close()
-    print(f"Stored {len(items)} PLUs into {DB_FILE}")
 
 def start_execution(session_id):
     url = START_EXECUTION_URL_TEMPLATE.format(session_id=session_id)
-    r = session.post(url, json={})
-    r.raise_for_status()
-    print("Execution started.\n")
+    session.post(url, json={}).raise_for_status()
 
 def get_correct_plu_number(conn, plu_number_id):
     c = conn.cursor()
@@ -162,18 +124,30 @@ def get_correct_plu_number(conn, plu_number_id):
     result = c.fetchone()
     return result[0] if result else None
 
-def submit_answers(items):
+
+def submit_answers(items, wrong_count=0):
     conn = sqlite3.connect(DB_FILE)
-    for item in tqdm(items, desc="Submitting answers", unit="item"):
+    total = len(items)
+
+    wrong_indices = set(random.sample(range(total), wrong_count))
+
+    for i, item in enumerate(tqdm(items, desc="Submitting answers", unit="item")):
         plu_number_id = item["pluNumberId"]
         correct_plu = get_correct_plu_number(conn, plu_number_id)
-        if not correct_plu:
-            continue
+
+        if i in wrong_indices:
+            # Submit a wrong answer (e.g., "0000")
+            given_plu = "0000"
+            correct_flag = False
+        else:
+            given_plu = correct_plu
+            correct_flag = True
+
         payload = {
             "execution_type": 3,
-            "given_plu_number": correct_plu,
+            "given_plu_number": given_plu,
             "plu_number_id": plu_number_id,
-            "answer": {"correct": True}
+            "answer": {"correct": correct_flag}
         }
         url = UPDATE_ANSWER_URL_TEMPLATE.format(item_id=item["id"])
         session.put(url, json=payload)
@@ -185,36 +159,51 @@ def submit_result(session_id, user_id):
     r = session.post(url, json=payload)
     r.raise_for_status()
     data = r.json().get("data", {})
+    final_result = data.get("final_result", 0)
+    print(f"\nFinal Result: {final_result}%")
+    return final_result
 
-    result = data.get("result", {})
-    session_info = data.get("executionSession", {})
-
-    print("\n=== Final Test Statistics ===")
-    print(f"Session ID           : {result.get('plu_execution_session_id')}")
-    print(f"Total Execution Time : {result.get('total_execution_time')} s")
-    print(f"User Points          : {result.get('total_user_points')}/{result.get('max_points')} (Required: {result.get('required_points')})")
-    print(f"Total Items Tested   : {session_info.get('plu_execution_session_item_count')}")
-    print(f"Product Category ID  : {session_info.get('product_category_id')}")
-    print(f"Final Result (%)     : {data.get('final_result')}")
-    print(f"User Knowledge (%)   : {data.get('user_knowledge')}")
-    print(f"Store Ranking        : #{data.get('user_ranking_in_store')}")
-    print(f"Gold Plus Earned     : {data.get('earned_gold_plus')}/{data.get('total_gold_plus')}")
-    print("=============================\n")
 
 def main():
     user_id = login()
     store_all_plus_if_needed(user_id)
-    preload_categories(user_id)
 
-    test_session_id = create_session(execution_type=3, user_id=user_id)
-    start_execution(test_session_id)
-    time.sleep(1)
+    choice = input("Do you want 100% score? [y/n]: ").strip().lower()
+    set_score = None
+    if choice != "y":
+        set_score_input = input("Enter a target score (e.g., 97) or press Enter to skip: ").strip()
+        if set_score_input.isdigit():
+            set_score = int(set_score_input)
 
-    items = fetch_execution_items(test_session_id, execution_type=3)
-    print(f"Fetched {len(items)} test items.\n")
+    final_result = 0
+    attempt = 1
+    while True:
+        print(f"\nStarting attempt #{attempt}...")
+        test_session_id = create_session(execution_type=3, user_id=user_id)
+        start_execution(test_session_id)
+        time.sleep(1)
+        items = fetch_execution_items(test_session_id, execution_type=3)
 
-    submit_answers(items)
-    submit_result(test_session_id, user_id)
+        wrong_count = 0
+        if set_score:
+            total_items = len(items)
+            correct_needed = int(total_items * (set_score / 100))
+            wrong_count = total_items - correct_needed
+            print(f"Answering {wrong_count} questions incorrectly for approximately {set_score}%.")
+
+        submit_answers(items, wrong_count=wrong_count)
+        final_result = submit_result(test_session_id, user_id)
+
+        if choice == "y":
+            if final_result == 100:
+                print("Achieved 100%. Done.")
+                break
+            else:
+                print(f"Result was {final_result}%. Retrying test until 100% is achieved...\n")
+                attempt += 1
+                time.sleep(2)
+        else:
+            break
 
 if __name__ == "__main__":
     main()
