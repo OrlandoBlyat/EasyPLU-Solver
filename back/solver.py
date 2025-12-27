@@ -196,6 +196,7 @@ def submit_result(session_id, user_id):
 def run_session(email: str, password: str, target_score: int = None):
     debug_print("Running test session...")
     user_id = login(email, password)
+    debug_print(f"Logged in, user_id={user_id}")
     store_all_plus_if_needed(user_id)
 
     test_session_id = create_session(execution_type=3, user_id=user_id)
