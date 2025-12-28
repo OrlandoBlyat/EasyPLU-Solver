@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from solver import run_session
 
@@ -30,3 +31,13 @@ def run_plu_session(req: SessionRequest):
         return {"status": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health", tags=["Health"])
+async def health():
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "service": "api",
+        }
+    )

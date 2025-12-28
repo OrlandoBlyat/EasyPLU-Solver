@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { X } from "lucide-react"
+import { X, Eye, EyeOff, Wifi, WifiOff, RefreshCw } from "lucide-react"
 
 interface SessionResult {
   final_result: number
@@ -21,22 +21,56 @@ interface SessionResult {
   total_execution_time: number
 }
 
+type ApiStatus = "checking" | "online" | "offline" | "error"
+
 export function LoginForm() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [targetScore, setTargetScore] = useState<number | undefined>(undefined)
   const [showCustomResult, setShowCustomResult] = useState(false)
+  const [fullKnowledge, setFullKnowledge] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
   const [currentMessage, setCurrentMessage] = useState<string>("")
   const [result, setResult] = useState<SessionResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showBackground, setShowBackground] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [apiStatus, setApiStatus] = useState<ApiStatus>("checking")
 
   useEffect(() => {
     const isHelena = email.toLowerCase().includes("helena")
     setShowBackground(isHelena)
-    document.body.classList.toggle("helena-cursor", isHelena);
+    document.body.classList.toggle("helena-cursor", isHelena)
   }, [email])
+
+  useEffect(() => {
+    const checkApiHealth = async () => {
+      try {
+        setApiStatus("checking")
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+        const response = await fetch("http://localhost:8000/health", {
+          signal: controller.signal,
+        })
+
+        clearTimeout(timeoutId)
+
+        if (response.ok) {
+          setApiStatus("online")
+        } else {
+          setApiStatus("error")
+        }
+      } catch (err) {
+        setApiStatus("offline")
+      }
+    }
+
+    checkApiHealth()
+    const interval = setInterval(checkApiHealth, 30000) // Check every 30 seconds
+
+    return () => clearInterval(interval)
+  }, [])
 
   const handleEasyPLULogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -54,7 +88,7 @@ export function LoginForm() {
       const response = await fetch("http://localhost:8000/run-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, target_score: targetScore }),
+        body: JSON.stringify({ email, password, target_score: targetScore, full_knowledge: fullKnowledge }),
       })
 
       if (response.status === 401) {
@@ -92,12 +126,64 @@ export function LoginForm() {
     }
   }
 
+  const getStatusConfig = () => {
+    switch (apiStatus) {
+      case "checking":
+        return {
+          icon: RefreshCw,
+          text: "Preverjanje API...",
+          bgColor: "bg-yellow-100 dark:bg-yellow-950/30",
+          textColor: "text-yellow-800 dark:text-yellow-300",
+          borderColor: "border-yellow-300 dark:border-yellow-700",
+          iconClass: "animate-spin",
+        }
+      case "online":
+        return {
+          icon: Wifi,
+          text: "API Povezan",
+          bgColor: "bg-green-100 dark:bg-green-950/30",
+          textColor: "text-green-800 dark:text-green-300",
+          borderColor: "border-green-300 dark:border-green-700",
+          iconClass: "",
+        }
+      case "offline":
+        return {
+          icon: WifiOff,
+          text: "API Nedostopen",
+          bgColor: "bg-red-100 dark:bg-red-950/30",
+          textColor: "text-red-800 dark:text-red-300",
+          borderColor: "border-red-300 dark:border-red-700",
+          iconClass: "",
+        }
+      case "error":
+        return {
+          icon: WifiOff,
+          text: "API Napaka",
+          bgColor: "bg-orange-100 dark:bg-orange-950/30",
+          textColor: "text-orange-800 dark:text-orange-300",
+          borderColor: "border-orange-300 dark:border-orange-700",
+          iconClass: "",
+        }
+    }
+  }
+
+  const statusConfig = getStatusConfig()
+  const StatusIcon = statusConfig.icon
+
   return (
     <>
       {!showBackground && <div className="fixed inset-0 bg-white z-0" style={{ pointerEvents: "none" }} />}
       <Card className="w-full max-w-md relative z-10 mx-4 sm:mx-0">
         <CardHeader className="space-y-1 text-center px-4 sm:px-6">
           <CardTitle className="text-2xl sm:text-3xl font-title font-bold tracking-tight">easyPLU solver</CardTitle>
+          <div className="flex justify-center pt-2">
+            <div
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border ${statusConfig.bgColor} ${statusConfig.borderColor} transition-all duration-300`}
+            >
+              <StatusIcon className={`w-4 h-4 ${statusConfig.textColor} ${statusConfig.iconClass}`} />
+              <span className={`text-xs font-medium ${statusConfig.textColor}`}>{statusConfig.text}</span>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="space-y-6 px-4 sm:px-6">
           <form onSubmit={handleEasyPLULogin} className="space-y-4">
@@ -119,28 +205,55 @@ export function LoginForm() {
               <Label htmlFor="password" className="text-sm font-medium px-1">
                 Geslo
               </Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="h-11"
-              />
+
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="h-11 pr-10"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 transition-colors"
+                  aria-label={showPassword ? "Skrij geslo" : "Prikaži geslo"}
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center space-x-2 px-1">
-              <input
-                type="checkbox"
-                id="customResult"
-                checked={showCustomResult}
-                onChange={(e) => setShowCustomResult(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <Label htmlFor="customResult" className="text-sm font-medium cursor-pointer">
-                Rezultat po meri
-              </Label>
+            <div className="flex flex-col md:flex-row md:gap-6 gap-3 px-1">
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="fullKnowledge"
+                  checked={fullKnowledge}
+                  onChange={(e) => setFullKnowledge(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <Label htmlFor="fullKnowledge" className="text-sm font-medium cursor-pointer">
+                  100% Znanje
+                </Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="customResult"
+                  checked={showCustomResult}
+                  onChange={(e) => setShowCustomResult(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <Label htmlFor="customResult" className="text-sm font-medium cursor-pointer">
+                  Rezultat po meri
+                </Label>
+              </div>
             </div>
 
             {showCustomResult && (
@@ -265,7 +378,7 @@ export function LoginForm() {
             <div className="mt-4 p-4 rounded-lg bg-red-50 border border-red-200">
               <div className="flex items-center gap-2">
                 <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <path fillRule="evenodd" d="M6 18L18 6M6 6l12 12" clipRule="evenodd" />
                 </svg>
                 <p className="text-sm text-red-700 font-medium">Napaka: {error}</p>
               </div>
@@ -282,7 +395,7 @@ export function LoginForm() {
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
                 <path
                   fillRule="evenodd"
-                  d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.387.6.112.82-.262.82-.583 0-.288-.01-1.05-.015-2.06-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.09-.746.083-.73.083-.73 1.205.084 1.84 1.238 1.84 1.238 1.07 1.834 2.807 1.304 3.492.997.108-.776.418-1.304.762-1.604-2.665-.304-5.466-1.332-5.466-5.933 0-1.31.468-2.38 1.235-3.22-.123-.303-.535-1.523.117-3.176 0 0 1.008-.322 3.3 1.23a11.5 11.5 0 013.003-.404c1.018.004 2.045.137 3.003.404 2.29-1.552 3.296-1.23 3.296-1.23.655 1.653.243 2.873.12 3.176.77.84 1.233 1.91 1.233 3.22 0 4.61-2.807 5.625-5.478 5.922.43.372.823 1.102.823 2.222 0 1.604-.015 2.896-.015 3.287 0 .324.218.7.825.582C20.565 21.796 24 17.297 24 12c0-6.63-5.37-12-12-12z"
+                  d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.387.6.112.82-.262.82-.583 0-.288-.01-1.05-.015-2.06-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.09-.746.083-.73.083-.73 1.205.084 1.84 1.238 1.84 1.238 1.07 1.834 2.807 1.304 3.492.997.108-.776.418-1.304.762-1.604-2.665-.304-5.466-1.332-5.466-5.933 0-1.31.468-2.38 1.235-3.22-.123-.303-.535-1.523.117-3.176 0 0 1.008-.322 3.3 1.23a11.5 11.5 0 013.003-.404c1.018.004 2.045.137 3.003.404 2.29-1.552 3.296-1.23 3.296-1.23.655 1.653.243 2.873.12 3.176.77.84 1.233 1.91 1.233 3.22 0 4.61-2.807 5.625-5.478 5.922.43.372.823 1.102.823 2.222 0 .324.218.7.825.582C20.565 21.796 24 17.297 24 12c0-6.63-5.37-12-12-12z"
                   clipRule="evenodd"
                 />
               </svg>
