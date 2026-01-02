@@ -128,7 +128,7 @@ def get_correct_plu_number(conn, plu_number_id):
     return result[0] if result else None
 
 
-def submit_answers(items, wrong_count=0):
+def submit_answers(items, wrong_count=0, progress_callback=None):
     debug_print(f"Submitting answers, wrong_count={wrong_count}")
     conn = sqlite3.connect(DB_FILE)
     total = len(items)
@@ -162,6 +162,9 @@ def submit_answers(items, wrong_count=0):
             "correct": correct_flag
         })
         debug_print(f"Submitted item {i+1}/{total}: given_plu={given_plu}, correct={correct_flag}")
+        
+        if progress_callback:
+            progress_callback(i + 1, total)
 
     conn.close()
     return detailed_results
@@ -193,41 +196,80 @@ def submit_result(session_id, user_id):
     return logical_result
 
 
-def run_session(email: str, password: str, target_score: int = None):
-    debug_print("Running test session...")
-    user_id = login(email, password)
-    debug_print(f"Logged in, user_id={user_id}")
-    store_all_plus_if_needed(user_id)
-
-    test_session_id = create_session(execution_type=3, user_id=user_id)
-    start_execution(test_session_id)
-    time.sleep(1)
-    items = fetch_execution_items(test_session_id, execution_type=3)
-
-    wrong_count = 0
-    if target_score:
-        total_items = len(items)
-        correct_needed = int(total_items * (target_score / 100))
-        wrong_count = total_items - correct_needed
-
-    detailed_results = submit_answers(items, wrong_count=wrong_count)
-    result_data = submit_result(test_session_id, user_id)
-
-    total_items = len(detailed_results)
-    correct_items = sum(1 for r in detailed_results if r["correct"])
-    incorrect_items = total_items - correct_items
-    average_score = (correct_items / total_items) * 100 if total_items else 0
-
-    debug_print(f"Total items: {total_items}")
-    debug_print(f"Correct items: {correct_items}")
-    debug_print(f"Incorrect items: {incorrect_items}")
-    debug_print(f"Average score: {average_score}")
-
-    return {
-        **result_data,
-        "total_items": total_items,
-        "correct_items": correct_items,
-        "incorrect_items": incorrect_items,
-        "average_score": average_score,
-        "detailed_results": detailed_results
-    }
+def run_session(email: str, password: str, target_score: int = None, progress_callback=None):
+    def emit_progress(stage: str, progress: float, message: str = "", extra_data: dict = None):
+        if progress_callback:
+            data = {
+                "stage": stage,
+                "progress": progress,
+                "message": message,
+                **(extra_data or {})
+            }
+            progress_callback(data)
+    
+    try:
+        emit_progress("initializing", 0, "Začenjanje seje...")
+        debug_print("Running test session...")
+        
+        emit_progress("logging_in", 10, "Prijavljanje...")
+        user_id = login(email, password)
+        debug_print(f"Logged in, user_id={user_id}")
+        
+        emit_progress("storing_plus", 20, "Shranjevanje PLU podatkov...")
+        store_all_plus_if_needed(user_id)
+        
+        emit_progress("creating_session", 30, "Ustvarjanje seje...")
+        test_session_id = create_session(execution_type=3, user_id=user_id)
+        
+        emit_progress("starting_execution", 40, "Zaganjanje izvajanja...")
+        start_execution(test_session_id)
+        time.sleep(1)
+        
+        emit_progress("fetching_items", 50, "Pridobivanje elementov...")
+        items = fetch_execution_items(test_session_id, execution_type=3)
+        
+        wrong_count = 0
+        if target_score:
+            total_items = len(items)
+            correct_needed = int(total_items * (target_score / 100))
+            wrong_count = total_items - correct_needed
+        
+        emit_progress("submitting_answers", 60, "Oddajanje odgovorov...", {"total_items": len(items), "submitted": 0})
+        detailed_results = submit_answers(items, wrong_count=wrong_count, progress_callback=lambda current, total: emit_progress(
+            "submitting_answers",
+            60 + (current / total) * 30,
+            f"Oddajanje odgovorov: {current}/{total}",
+            {"total_items": total, "submitted": current}
+        ))
+        
+        emit_progress("submitting_result", 90, "Oddajanje rezultata...")
+        result_data = submit_result(test_session_id, user_id)
+        
+        total_items = len(detailed_results)
+        correct_items = sum(1 for r in detailed_results if r["correct"])
+        incorrect_items = total_items - correct_items
+        average_score = (correct_items / total_items) * 100 if total_items else 0
+        
+        debug_print(f"Total items: {total_items}")
+        debug_print(f"Correct items: {correct_items}")
+        debug_print(f"Incorrect items: {incorrect_items}")
+        debug_print(f"Average score: {average_score}")
+        
+        emit_progress("completed", 100, "Končano!", {
+            "total_items": total_items,
+            "correct_items": correct_items,
+            "incorrect_items": incorrect_items,
+            "average_score": average_score
+        })
+        
+        return {
+            **result_data,
+            "total_items": total_items,
+            "correct_items": correct_items,
+            "incorrect_items": incorrect_items,
+            "average_score": average_score,
+            "detailed_results": detailed_results
+        }
+    except Exception as e:
+        emit_progress("error", 0, f"Napaka: {str(e)}")
+        raise

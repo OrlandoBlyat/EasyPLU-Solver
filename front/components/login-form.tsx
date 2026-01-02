@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Progress } from "@/components/ui/progress"
 import { X, Eye, EyeOff, Wifi, WifiOff, RefreshCw } from "lucide-react"
 
 interface SessionResult {
@@ -28,9 +29,13 @@ export function LoginForm() {
   const [password, setPassword] = useState("")
   const [targetScore, setTargetScore] = useState<number | undefined>(undefined)
   const [showCustomResult, setShowCustomResult] = useState(false)
-  const [fullKnowledge, setFullKnowledge] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
   const [currentMessage, setCurrentMessage] = useState<string>("")
+  const [currentStage, setCurrentStage] = useState<string>("")
+  const [progress, setProgress] = useState<number>(0)
+  const [submittedItems, setSubmittedItems] = useState<{ current: number; total: number } | null>(null)
+  const [attempt, setAttempt] = useState<number>(0)
+  const [currentKnowledge, setCurrentKnowledge] = useState<number | null>(null)
   const [result, setResult] = useState<SessionResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showBackground, setShowBackground] = useState(false)
@@ -77,24 +82,28 @@ export function LoginForm() {
     setIsRunning(true)
     setResult(null)
     setError(null)
+    setProgress(0)
+    setCurrentStage("")
+    setCurrentMessage("")
+    setSubmittedItems(null)
+    setAttempt(0)
+    setCurrentKnowledge(null)
 
     try {
-      // Step 0: API OK
-      setCurrentMessage("API OK")
-      await new Promise((r) => setTimeout(r, 500))
-
-      // Step 1: Logging in
-      setCurrentMessage("Prijavljanje")
-      const response = await fetch("http://localhost:8000/run-session", {
+      const response = await fetch("http://localhost:8000/run-session-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, target_score: targetScore, full_knowledge: fullKnowledge }),
+        body: JSON.stringify({ 
+          email, 
+          password, 
+          target_score: targetScore,
+          full_knowledge: true 
+        }),
       })
 
       if (response.status === 401) {
         setError("Napačni podatki, preveri geslo ali uporabniško ime!")
         setIsRunning(false)
-        setCurrentMessage("")
         return
       }
 
@@ -102,28 +111,89 @@ export function LoginForm() {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
-      const data = await response.json()
-      if (data.status !== "success") throw new Error(data.detail || "Session failed")
+      if (!response.body) {
+        throw new Error("No response body")
+      }
 
-      // Step 2: Solving Test
-      setCurrentMessage("Reševanje testa")
-      await new Promise((r) => setTimeout(r, 800))
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
 
-      // Step 3: Done
-      setCurrentMessage("Končano")
-      await new Promise((r) => setTimeout(r, 300))
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      setResult(data.data)
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              
+              setCurrentStage(data.stage || "")
+              setCurrentMessage(data.message || "")
+              setProgress(data.progress || 0)
+
+              // Update attempt and knowledge if provided
+              if (data.attempt !== undefined) {
+                setAttempt(data.attempt)
+              }
+              if (data.user_knowledge !== undefined && data.user_knowledge !== null) {
+                setCurrentKnowledge(data.user_knowledge)
+              }
+
+              if (data.submitted !== undefined && data.total_items !== undefined) {
+                setSubmittedItems({ current: data.submitted, total: data.total_items })
+              } else if (data.stage !== "submitting_answers") {
+                setSubmittedItems(null)
+              }
+
+              if (data.stage === "final" && data.result) {
+                setResult(data.result)
+                setIsRunning(false)
+                return
+              }
+
+              if (data.stage === "error") {
+                setError(data.message || data.error || "Neznana napaka")
+                setIsRunning(false)
+                return
+              }
+            } catch (parseError) {
+              console.error("Error parsing SSE data:", parseError)
+            }
+          }
+        }
+      }
     } catch (err: any) {
       if (err.message && err.message.includes("401")) {
         setError("Napačni podatki, preveri geslo ali uporabniško ime!")
       } else {
-        setError(err.message)
+        setError(err.message || "Napaka pri povezovanju s strežnikom")
       }
-    } finally {
       setIsRunning(false)
-      setCurrentMessage("")
     }
+  }
+
+  const getStageLabel = (stage: string): string => {
+    const stageLabels: Record<string, string> = {
+      initializing: "Začenjanje",
+      logging_in: "Prijavljanje",
+      storing_plus: "Shranjevanje PLU podatkov",
+      creating_session: "Ustvarjanje seje",
+      starting_execution: "Zaganjanje izvajanja",
+      fetching_items: "Pridobivanje elementov",
+      submitting_answers: "Oddajanje odgovorov",
+      submitting_result: "Oddajanje rezultata",
+      completed: "Končano",
+      error: "Napaka",
+      attempt_start: "Začenjanje poskusa",
+      attempt_complete: "Poskus končan",
+      retrying: "Ponovno poskušanje",
+    }
+    return stageLabels[stage] || stage
   }
 
   const getStatusConfig = () => {
@@ -228,32 +298,17 @@ export function LoginForm() {
               </div>
             </div>
 
-            <div className="flex flex-col md:flex-row md:gap-6 gap-3 px-1">
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="fullKnowledge"
-                  checked={fullKnowledge}
-                  onChange={(e) => setFullKnowledge(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                <Label htmlFor="fullKnowledge" className="text-sm font-medium cursor-pointer">
-                  100% Znanje
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="customResult"
-                  checked={showCustomResult}
-                  onChange={(e) => setShowCustomResult(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                <Label htmlFor="customResult" className="text-sm font-medium cursor-pointer">
-                  Rezultat po meri
-                </Label>
-              </div>
+            <div className="flex items-center space-x-2 px-1">
+              <input
+                type="checkbox"
+                id="customResult"
+                checked={showCustomResult}
+                onChange={(e) => setShowCustomResult(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <Label htmlFor="customResult" className="text-sm font-medium cursor-pointer">
+                Rezultat po meri
+              </Label>
             </div>
 
             {showCustomResult && (
@@ -293,83 +348,126 @@ export function LoginForm() {
 
           {isRunning && (
             <div className="flex flex-col items-center justify-center py-8 space-y-4">
-              <div className="relative w-16 h-16">
-                <div className="absolute inset-0 rounded-full border-4 border-gray-200"></div>
-                <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-blue-600 border-r-blue-500 animate-spin"></div>
-                <div className="absolute inset-2 rounded-full bg-blue-100 animate-pulse"></div>
+              <div className="w-full space-y-3">
+                {/* Stage indicator */}
+                {currentStage && (
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
+                      {getStageLabel(currentStage)}
+                    </p>
+                    {currentMessage && (
+                      <p className="text-xs text-gray-600 dark:text-gray-400">{currentMessage}</p>
+                    )}
+                    {/* Attempt and knowledge info */}
+                    {(attempt > 0 || currentKnowledge !== null) && (
+                      <div className="flex items-center justify-center gap-3 mt-2">
+                        {attempt > 0 && (
+                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 px-2 py-1 rounded">
+                            Poskus: {attempt}
+                          </span>
+                        )}
+                        {currentKnowledge !== null && (
+                          <span className="text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 px-2 py-1 rounded">
+                            Znanje: {currentKnowledge.toFixed(2)}%
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {/* Progress bar */}
+                <div className="w-full space-y-2">
+                  <Progress value={progress} className="h-2" />
+                  <div className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400">
+                    <span>{Math.round(progress)}%</span>
+                    {submittedItems && (
+                      <span>
+                        Oddano: {submittedItems.current} / {submittedItems.total}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Loading spinner */}
+                <div className="flex justify-center pt-2">
+                  <div className="relative w-12 h-12">
+                    <div className="absolute inset-0 rounded-full border-4 border-gray-200 dark:border-gray-700"></div>
+                    <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-blue-600 border-r-blue-500 animate-spin"></div>
+                  </div>
+                </div>
               </div>
-              <p className="text-sm font-medium text-gray-700 animate-pulse">{currentMessage}</p>
             </div>
           )}
 
           {result && (
-            <div className="mt-4 p-4 sm:p-6 rounded-lg bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border border-green-200 dark:border-green-800 space-y-4 relative">
+            <div className="mt-4 p-3 rounded-lg bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border border-green-200 dark:border-green-800 space-y-2 relative">
               <button
                 onClick={() => setResult(null)}
-                className="absolute top-2 right-2 sm:top-3 sm:right-3 p-1 rounded-full hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors touch-manipulation"
+                className="absolute top-2 right-2 p-1 rounded-full hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors touch-manipulation"
                 aria-label="Zapri rezultate"
               >
-                <X className="w-5 h-5 text-green-700 dark:text-green-300" />
+                <X className="w-4 h-4 text-green-700 dark:text-green-300" />
               </button>
 
-              <div className="flex items-center gap-2 pb-2 border-b border-green-100 dark:border-green-800">
-                <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="flex items-center gap-2 pb-1.5 border-b border-green-100 dark:border-green-800">
+                <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <h3 className="text-base sm:text-lg font-semibold text-green-900 dark:text-green-100">
+                <h3 className="text-sm font-semibold text-green-900 dark:text-green-100">
                   Test uspešno zaključen
                 </h3>
               </div>
 
-              <div className="grid grid-cols-1 xs:grid-cols-2 gap-3">
-                <div className="bg-white/60 dark:bg-white/5 rounded-lg p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Končni rezultat</p>
-                  <p className="text-2xl font-bold text-green-700 dark:text-green-400">
-                    {result.final_result.toFixed(2)}%
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
+                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Rezultat</p>
+                  <p className="text-base font-bold text-green-700 dark:text-green-400">
+                    {result.final_result.toFixed(1)}%
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded-lg p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Znanje uporabnika</p>
-                  <p className="text-2xl font-bold text-green-700 dark:text-green-400">
-                    {result.user_knowledge.toFixed(2)}%
+                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
+                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Znanje</p>
+                  <p className="text-base font-bold text-green-700 dark:text-green-400">
+                    {result.user_knowledge.toFixed(1)}%
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded-lg p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Pridobljene točke</p>
-                  <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                    {result.total_user_points} / {result.max_points}
+                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
+                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Točke</p>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                    {result.total_user_points}/{result.max_points}
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded-lg p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Uvrstitev v trgovini</p>
-                  <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
+                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Uvrstitev</p>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                     #{result.user_ranking_in_store}
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded-lg p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Gold Plus</p>
-                  <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                    {result.earned_gold_plus} / {result.total_gold_plus}
+                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
+                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Gold Plus</p>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                    {result.earned_gold_plus}/{result.total_gold_plus}
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded-lg p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Opravljeni elementi</p>
-                  <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
+                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Elementi</p>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                     {result.plu_execution_session_item_count}
                   </p>
                 </div>
               </div>
 
-              <div className="bg-white/60 dark:bg-white/5 rounded-lg p-3 border border-green-100 dark:border-green-800">
-                <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Skupni čas izvajanja</p>
-                <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">{result.total_execution_time}s</p>
+              <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
+                <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Čas izvajanja</p>
+                <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{result.total_execution_time}s</p>
               </div>
             </div>
           )}
