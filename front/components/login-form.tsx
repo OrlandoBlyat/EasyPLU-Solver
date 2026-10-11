@@ -26,9 +26,13 @@ interface SessionResult {
 
 type ApiStatus = "checking" | "online" | "offline" | "error"
 
+const isEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) && value.trim().length <= 254
+
 export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?: ApiStatus }) {
   const [email, setEmail] = useState("")
+  const [showUsernameWarning, setShowUsernameWarning] = useState(false)
   const [password, setPassword] = useState("")
+  const [showPasswordWarning, setShowPasswordWarning] = useState(false)
   const [targetScore, setTargetScore] = useState<number | undefined>(undefined)
   const [showCustomResult, setShowCustomResult] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
@@ -36,7 +40,6 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   const [currentStage, setCurrentStage] = useState<string>("")
   const [progress, setProgress] = useState<number>(0)
   const [submittedItems, setSubmittedItems] = useState<{ current: number; total: number } | null>(null)
-  const [attempt, setAttempt] = useState<number>(0)
   const [currentKnowledge, setCurrentKnowledge] = useState<number | null>(null)
   const [result, setResult] = useState<SessionResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -83,9 +86,6 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   }, [initialApiStatus])
 
   const startSession = async (loginMethod: "easyplu" | "sso") => {
-    const nextRunId = typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("")
     setIsRunning(true)
     setResult(null)
     setError(null)
@@ -93,10 +93,9 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
     setCurrentStage("")
     setCurrentMessage("")
     setSubmittedItems(null)
-    setAttempt(0)
     setCurrentKnowledge(null)
     setOtp("")
-    setRunId(nextRunId)
+    setRunId(null)
 
     try {
       const response = await fetch("/api/backend/run-session-stream", {
@@ -108,7 +107,6 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           target_score: targetScore,
           full_knowledge: true,
           login_method: loginMethod,
-          run_id: nextRunId,
         }),
       })
 
@@ -119,6 +117,10 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       }
 
       if (!response.ok) {
+        if (response.status === 429) {
+          const data = await response.json()
+          throw new Error(data.detail || "Strežnik je zaseden. Poskusite pozneje.")
+        }
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
@@ -142,6 +144,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6))
+              if (data.run_id) setRunId(data.run_id)
               if (data.stage === "closed") {
                 throw new Error("Povezava se je zaprla pred zaključkom testa. Poskusite znova.")
               }
@@ -150,10 +153,6 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               setCurrentMessage(data.message || "")
               setProgress(data.progress || 0)
 
-              // Update attempt and knowledge if provided
-              if (data.attempt !== undefined) {
-                setAttempt(data.attempt)
-              }
               if (data.user_knowledge !== undefined && data.user_knowledge !== null) {
                 setCurrentKnowledge(data.user_knowledge)
               }
@@ -179,8 +178,8 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               if (parseError instanceof Error && !(parseError instanceof SyntaxError)) {
                 throw parseError
               }
-              if (debugConfig.enabled && debugConfig.frontend) {
-                console.error("[EasyPLU] Invalid progress event")
+              if (process.env.NODE_ENV === "development" && debugConfig.enabled && debugConfig.frontend) {
+                console.error("[EasyPLU] Invalid progress event:", parseError)
               }
             }
           }
@@ -199,12 +198,13 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
 
   const handleEasyPLULogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!isEmail(email) || password.length < 8) return
     await startSession("easyplu")
   }
 
   const handleSsoLogin = async () => {
-    if (!email.trim() || !password) {
-      setError("Vnesite uporabniško ime in geslo")
+    if (!/^[0-9]{8}$/.test(email.trim()) || password.length < 8) {
+      setError("Vnesite osemmestno globalno številko in geslo")
       return
     }
     await startSession("sso")
@@ -212,7 +212,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
 
   const handleSubmitOtp = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!runId || !otp.trim() || otpSubmitting) return
+    if (!runId || !/^[0-9]{6}$/.test(otp) || otpSubmitting) return
 
     setOtpSubmitting(true)
     setError(null)
@@ -220,11 +220,11 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       const response = await fetch("/api/backend/submit-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_id: runId, otp: otp.trim() }),
+        body: JSON.stringify({ run_id: runId, otp }),
       })
       if (!response.ok) {
-        const detail = await response.text()
-        throw new Error(detail || `HTTP error! status: ${response.status}`)
+        const data = await response.json()
+        throw new Error(data.detail || `HTTP error! status: ${response.status}`)
       }
       setOtp("")
       setCurrentStage((stage) => stage === "otp_required" ? "logging_in" : stage)
@@ -249,14 +249,18 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       submitting_result: "Oddajanje rezultata",
       completed: "Končano",
       error: "Napaka",
-      attempt_start: "Začenjanje poskusa",
-      attempt_complete: "Poskus končan",
-      retrying: "Ponovno poskušanje",
+      attempt_start: "Priprava testa",
+      attempt_complete: "Preverjanje znanja",
+      retrying: "Nadaljevanje testa",
     }
     return stageLabels[stage] || stage
   }
 
   const isSubmittingAnswers = currentStage === "submitting_answers"
+  const isSsoUsername = /^\d{8}$/.test(email.trim())
+  const isEmailUsername = isEmail(email)
+  const usernameInvalid = showUsernameWarning && Boolean(email.trim()) && !isSsoUsername && !isEmailUsername
+  const passwordInvalid = showPasswordWarning && password.length > 0 && password.length < 8
 
   const statusText = apiStatus === "online"
     ? "API povezan"
@@ -296,7 +300,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           <form onSubmit={handleEasyPLULogin} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium px-1">
-                Uporabniško ime ali e-naslov
+                Globalna številka ali e-naslov
               </Label>
               <Input
                 id="email"
@@ -305,12 +309,24 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                 autoCapitalize="none"
                 spellCheck={false}
                 disabled={isRunning}
-                placeholder="ime@primer.si"
+                placeholder="12345678 ali ime@primer.si"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value)
+                  setShowUsernameWarning(false)
+                }}
+                onFocus={() => setShowUsernameWarning(false)}
+                onBlur={() => setShowUsernameWarning(true)}
+                aria-invalid={usernameInvalid}
+                aria-describedby={usernameInvalid ? "username-warning" : undefined}
                 required
                 className="h-12 rounded-xl border-slate-200 bg-slate-50/70 text-base shadow-none focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
               />
+              {usernameInvalid && (
+                <p id="username-warning" role="status" className="px-1 text-xs text-amber-700">
+                  Vnesite veljaven e-naslov ali osemmestno globalno številko.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="password" className="text-sm font-medium px-1">
@@ -323,7 +339,15 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                   type={showPassword ? "text" : "password"}
                   placeholder="••••••••"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    setShowPasswordWarning(false)
+                  }}
+                  onFocus={() => setShowPasswordWarning(false)}
+                  onBlur={() => setShowPasswordWarning(true)}
+                  minLength={8}
+                  aria-invalid={passwordInvalid}
+                  aria-describedby={passwordInvalid ? "password-warning" : undefined}
                   required
                   className="h-12 rounded-xl border-slate-200 bg-slate-50/70 pr-12 text-base shadow-none focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
                   autoComplete="current-password"
@@ -339,6 +363,11 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
+              {passwordInvalid && (
+                <p id="password-warning" role="status" className="px-1 text-xs text-amber-700">
+                  Geslo mora vsebovati vsaj 8 znakov.
+                </p>
+              )}
             </div>
 
             <div className="flex min-h-14 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-4">
@@ -359,15 +388,21 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               <div className="relative">
                 <Input
                   id="targetScore"
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]{1,2}"
+                  maxLength={2}
                   placeholder="Rezultat"
                   value={targetScore ?? ""}
-                  onChange={(e) => setTargetScore(e.target.value ? Number(e.target.value) : undefined)}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    if (/^[0-9]{0,2}$/.test(value)) {
+                      setTargetScore(value ? Number(value) : undefined)
+                    }
+                  }}
                   className="h-12 rounded-xl border-slate-200 pr-8 text-base"
                   aria-label="Rezultat po meri v odstotkih"
                   disabled={isRunning}
-                  min="0"
-                  max="100"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
               </div>
@@ -376,22 +411,27 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
             <div className="space-y-3 pt-2">
               <p className="text-xs font-medium text-slate-500">IZBERITE NAČIN PRIJAVE</p>
               <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
-                <Button type="submit" size="lg" className="h-12 rounded-xl bg-blue-600 font-semibold text-white hover:bg-blue-700 cursor-pointer" disabled={isRunning}>
+                <Button type="submit" size="lg" className="h-12 rounded-xl bg-blue-600 font-semibold text-white hover:bg-blue-700 cursor-pointer disabled:bg-slate-200 disabled:text-slate-500 disabled:opacity-100" disabled={isRunning || !isEmailUsername || password.length < 8}>
                   easyPLU <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </Button>
                 <Button
                   type="button"
                   size="lg"
-                  variant="secondary"
-                  className="h-12 rounded-xl border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                  disabled={isRunning}
+                  className={`h-12 rounded-xl font-semibold cursor-pointer ${isSsoUsername ? "bg-blue-600 text-white hover:bg-blue-700" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                  disabled={isRunning || !isSsoUsername || password.length < 8}
                   onClick={handleSsoLogin}
                 >
-                  Lidl SSO
+                  Lidl SSO <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </Button>
               </div>
             </div>
           </form>
+          )}
+
+          {isRunning && (
+            <p className="text-center text-xs leading-relaxed text-slate-500">
+              Za dosego 100 % znanja se test po potrebi samodejno ponovi.
+            </p>
           )}
 
           {isRunning && (
@@ -415,14 +455,9 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                     {currentMessage && (
                       <p className="text-xs text-gray-600 dark:text-gray-400">{currentMessage}</p>
                     )}
-                    {/* Attempt and knowledge info */}
-                    {(attempt > 0 || currentKnowledge !== null) && (
+                    {/* Knowledge info */}
+                    {currentKnowledge !== null && (
                       <div className="flex items-center justify-center gap-3 mt-2">
-                        {attempt > 0 && (
-                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 px-2 py-1 rounded">
-                            Poskus: {attempt}
-                          </span>
-                        )}
                         {currentKnowledge !== null && (
                           <span className="text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 px-2 py-1 rounded">
                             Znanje: {currentKnowledge.toFixed(2)}%
@@ -434,19 +469,11 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                 )}
                 
                 {/* Progress bar */}
+                {isSubmittingAnswers && (
                 <div className="w-full space-y-2">
-                  <Progress value={progress} className="h-2 [&>div]:bg-blue-600" />
-                  {!isSubmittingAnswers && (
-                  <div className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400">
-                    <span>{Math.round(progress)}%</span>
-                    {submittedItems && (
-                      <span>
-                        Oddano: {submittedItems.current} / {submittedItems.total}
-                      </span>
-                    )}
-                  </div>
-                  )}
+                  <Progress value={submittedItems && submittedItems.total > 0 ? (submittedItems.current / submittedItems.total) * 100 : 0} className="h-2 [&>div]:bg-blue-600" />
                 </div>
+                )}
 
                 {currentStage === "otp_required" && (
                   <form onSubmit={handleSubmitOtp} className="space-y-3 pt-2">
@@ -454,6 +481,9 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                       id="otp"
                       type="text"
                       inputMode="numeric"
+                      pattern="[0-9]{6}"
+                      minLength={6}
+                      maxLength={6}
                       autoComplete="one-time-code"
                       aria-label="SMS koda"
                       placeholder="SMS koda"
@@ -462,7 +492,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                       className="h-12 rounded-xl border-slate-200 bg-slate-50/70 text-base shadow-none focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
                       required
                     />
-                    <Button type="submit" className="h-12 w-full rounded-xl bg-blue-600 hover:bg-blue-700" disabled={otpSubmitting || !otp.trim()}>
+                    <Button type="submit" className="h-12 w-full rounded-xl bg-blue-600 hover:bg-blue-700" disabled={otpSubmitting || !runId || !/^[0-9]{6}$/.test(otp)}>
                       {otpSubmitting ? "Pošiljanje..." : "Pošlji SMS kodo"}
                     </Button>
                   </form>

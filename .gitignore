@@ -26,3 +26,8 @@ Thumbs.db
 *.sublime-project
 *.tsbuildinfo
 .cache/
+.api-key
+.backend.lock
+mylidl_session.json
+mylidl_debug/
+.mylidl_session.json

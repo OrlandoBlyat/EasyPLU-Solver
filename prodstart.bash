@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+
+if [[ ! -s .api-key || ! -f front/.env.local ]]; then
+  if [[ ! -t 0 ]]; then
+    echo "Configure backend access first: python setup-access.py" >&2
+    exit 1
+  fi
+  read -r -p "Backend access is not configured. Run setup-access.py now? [y/N] " setup_answer
+  case "$setup_answer" in
+    [yY]|[yY][eE][sS]) python setup-access.py ;;
+    *) echo "Setup skipped. Startup cancelled."; exit 1 ;;
+  esac
+  if [[ ! -s .api-key || ! -f front/.env.local ]]; then
+    echo "Backend access setup is incomplete." >&2
+    exit 1
+  fi
+fi
+
+export APP_ENV=production
+export NODE_ENV=production
+
+# Default to loopback; terminate HTTPS at a reverse proxy.
+frontend_host="${FRONTEND_HOST:-127.0.0.1}"
+frontend_port="${FRONTEND_PORT:-3000}"
+backend_port="${BACKEND_PORT:-8000}"
+export API_BASE_URL="${API_BASE_URL:-http://127.0.0.1:${backend_port}}"
+
+if ! command -v uvicorn >/dev/null; then
+  if [[ ! -t 0 ]]; then
+    echo "uvicorn is missing. Activate the project's Python environment first." >&2
+    exit 1
+  fi
+  read -r -p "uvicorn is missing. Activate the project's virtual environment now? [y/N] " activate_answer
+  case "$activate_answer" in
+    [yY]|[yY][eE][sS])
+      if [[ -f .venv/bin/activate ]]; then
+        source .venv/bin/activate
+      elif [[ -f back/venv/bin/activate ]]; then
+        source back/venv/bin/activate
+      elif [[ -f venv/bin/activate ]]; then
+        source venv/bin/activate
+      else
+        echo "No virtual environment found. Create one using the README setup steps." >&2
+        exit 1
+      fi
+      ;;
+    *) echo "Activation skipped. Startup cancelled."; exit 1 ;;
+  esac
+  if ! command -v uvicorn >/dev/null; then
+    echo "uvicorn is still missing. Install the backend dependencies in this environment." >&2
+    exit 1
+  fi
+fi
+
+npm --prefix front run build
+
+service_pids=()
+cleanup() {
+  trap - EXIT INT TERM
+  for pid in "${service_pids[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+  for pid in "${service_pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+(cd back && exec uvicorn api:app --host 127.0.0.1 --port "$backend_port" --workers 1) &
+service_pids+=("$!")
+
+# Execute Next directly so signals reach its process without an npm wrapper.
+(cd front && exec node node_modules/next/dist/bin/next start --hostname "$frontend_host" --port "$frontend_port") &
+service_pids+=("$!")
+
+echo "Production frontend: http://${frontend_host}:${frontend_port} (use an HTTPS reverse proxy for network access)"
+
+# Stop both services if either exits, retaining its exit status.
+set +e
+wait -n "${service_pids[@]}"
+service_status=$?
+set -e
+exit "$service_status"

@@ -1,7 +1,6 @@
-"""Application diagnostics configured by the repository's debug-config.json."""
-
 import json
 import logging
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,23 +17,14 @@ if not _logger.handlers:
 
 
 def enabled(feature):
-    return bool(CONFIG.get("enabled") and CONFIG.get(feature, False))
-
-
-def _redact(value):
-    if isinstance(value, dict):
-        return {
-            key: "[REDACTED]" if any(word in str(key).lower() for word in ("token", "password", "cookie", "authorization", "otp", "secret")) else _redact(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_redact(item) for item in value]
-    return value
+    development = os.getenv("APP_ENV", "production").lower() == "development"
+    production = os.getenv("NODE_ENV", "").lower() == "production"
+    return bool(development and not production and CONFIG.get("enabled") and CONFIG.get(feature, False))
 
 
 def log(component, *values):
     if enabled(component):
-        _logger.debug("[%s] %s", component, " ".join(str(_redact(value)) for value in values))
+        _logger.debug("[%s] %s", component, " ".join(str(value) for value in values))
 
 
 def log_exception(component):

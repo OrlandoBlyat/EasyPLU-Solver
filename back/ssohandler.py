@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from debug import ARTIFACT_DIRECTORY, enabled, log as debug_log, log_exception
+from jobs import check_cancelled, JobCancelled
+from errors import SsoAuthenticationError
 
 START_URL = (
     "https://mylidl.lidl.com/sap/bc/ui5_ui5/ui2/"
@@ -51,6 +53,8 @@ def save_debug(page, name):
             timeout=5000
         )
         log(f"Screenshot saved: {path}")
+    except JobCancelled:
+        raise
     except Exception as e:
         log(f"Screenshot failed: {e}")
 
@@ -67,6 +71,8 @@ def fill_first(page, selectors, value, label):
                 log(f"{label} filled")
                 return True
 
+        except JobCancelled:
+            raise
         except Exception as e:
             log(
                 f"Selector error ({selector}): "
@@ -96,12 +102,16 @@ def submit(page):
                 button.click(timeout=10000)
                 return True
 
+        except JobCancelled:
+            raise
         except Exception as e:
             log(f"Submit error: {e}")
 
     try:
         page.locator("input:visible").last.press("Enter")
         return True
+    except JobCancelled:
+        raise
     except Exception as e:
         log(f"Enter fallback failed: {e}")
         return False
@@ -186,6 +196,8 @@ def select_sms_method(page):
                 log("SMS OTP clicked")
                 return True
 
+        except JobCancelled:
+            raise
         except Exception as e:
             log(f"SMS selector error: {type(e).__name__}: {e}")
 
@@ -200,6 +212,8 @@ def select_sms_method(page):
             target.click(timeout=10000)
             return True
 
+    except JobCancelled:
+        raise
     except Exception as e:
         log(f"SMS text click error: {e}")
 
@@ -221,6 +235,8 @@ def select_sms_method(page):
         log("SMS OTP element structure:")
         log(json.dumps(elements, indent=2))
 
+    except JobCancelled:
+        raise
     except Exception as e:
         log(f"SMS inspection error: {e}")
 
@@ -284,6 +300,7 @@ def login(page, username, password, otp_callback=None):
     last_report = -1
 
     while time.monotonic() - start < LOGIN_TIMEOUT:
+        check_cancelled()
         elapsed = int(time.monotonic() - start)
 
         try:
@@ -294,7 +311,7 @@ def login(page, username, password, otp_callback=None):
                 return
 
             if info["hasLoginError"]:
-                raise RuntimeError(
+                raise SsoAuthenticationError(
                     "Login page reports an authentication error"
                 )
 
@@ -425,9 +442,11 @@ def login(page, username, password, otp_callback=None):
 
             page.wait_for_timeout(500)
 
-        except RuntimeError:
+        except (RuntimeError, SsoAuthenticationError, TimeoutError):
             raise
 
+        except JobCancelled:
+            raise
         except Exception as e:
             log(
                 f"LOGIN LOOP ERROR: "
@@ -521,6 +540,7 @@ def click_easyplu(page):
     last_report = -1
 
     while time.monotonic() - start < TILE_TIMEOUT:
+        check_cancelled()
         for selector in selectors:
             try:
                 tile = page.locator(selector).first
@@ -534,6 +554,8 @@ def click_easyplu(page):
                     log("Tile clicked")
                     return
 
+            except JobCancelled:
+                raise
             except Exception as e:
                 log(f"Tile click error: {e}")
 
@@ -630,6 +652,7 @@ def sso_authenticate(username, password, otp_callback=None):
             last_report = -1
 
             while time.monotonic() - start < API_TIMEOUT:
+                check_cancelled()
                 elapsed = int(time.monotonic() - start)
 
                 if api_responses:
@@ -676,14 +699,10 @@ def sso_authenticate(username, password, otp_callback=None):
             )
 
             try:
-                response.finished()
-                log("API response download finished")
-            except Exception as e:
-                log(f"Response finish error: {e}")
-
-            try:
                 body = response.json()
                 log("JSON parsed successfully")
+            except JobCancelled:
+                raise
             except Exception as e:
                 log(f"JSON parsing failed: {e}")
                 body = response.text()
@@ -712,6 +731,8 @@ def sso_authenticate(username, password, otp_callback=None):
                         if stored_user_id:
                             user_id = stored_user_id
                             break
+                    except JobCancelled:
+                        raise
                     except Exception as e:
                         log(f"localStorage user lookup failed: {type(e).__name__}")
 
@@ -722,10 +743,18 @@ def sso_authenticate(username, password, otp_callback=None):
                     "SSO login succeeded but no EasyPLU API token was captured"
                 )
 
-            log("Saving browser session")
-            context.storage_state(
-                path=str(STATE_FILE)
-            )
+            if enabled("session_state"):
+                log("Saving browser session")
+                # Restrict access before writing cookies and tokens.
+                fd = os.open(STATE_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                try:
+                    os.fchmod(fd, 0o600)
+                    with os.fdopen(fd, "w") as state_file:
+                        fd = None
+                        json.dump(context.storage_state(), state_file)
+                finally:
+                    if fd is not None:
+                        os.close(fd)
 
             log("SUCCESS: easyPLU API captured")
 
@@ -738,6 +767,8 @@ def sso_authenticate(username, password, otp_callback=None):
                 "cookies": cookies,
             }
 
+        except JobCancelled:
+            raise
         except Exception as e:
             log(
                 f"FATAL ERROR: "

@@ -6,6 +6,8 @@ import time
 
 from ssohandler import extract_user_id, sso_authenticate
 from debug import log
+from errors import client_error, EasyPluAuthenticationError
+from jobs import SessionProxy, check_cancelled, wait, JobCancelled
 
 BASE_URL = "https://easy-plu.knowledge-hero.com/api/plu"
 LOGIN_URL = f"{BASE_URL}/login"
@@ -16,7 +18,7 @@ UPDATE_ANSWER_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{item_id}}/update"
 RESULT_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{session_id}}/result"
 
 DB_FILE = "plu_items.db"
-session = requests.Session()
+session = SessionProxy()
 
 
 def debug_print(*args):
@@ -44,9 +46,11 @@ def login_easyplu(email: str, password: str):
     debug_print("Logging in via EasyPLU...")
     payload = {"email": email, "password": password}
     r = session.post(LOGIN_URL, json=payload)
+    if r.status_code in (401, 403):
+        raise EasyPluAuthenticationError("EasyPLU credentials rejected")
     r.raise_for_status()
     data = r.json()
-    debug_print("Login response keys:", list(data))
+    debug_print("Login response:", data)
     token = data.get("api_token")
     if not token:
         raise RuntimeError("EasyPLU login succeeded but no api_token was returned")
@@ -82,6 +86,8 @@ def login_sso(username: str, password: str, otp_callback=None):
                     debug_print(f"knowledge/user user ID present: {bool(user_id)}")
                     if user_id:
                         break
+            except JobCancelled:
+                raise
             except Exception as e:
                 debug_print(f"knowledge/user {method} failed: {e}")
     if not user_id:
@@ -156,25 +162,28 @@ def store_all_plus_if_needed(user_id):
         return
     debug_print("Storing all PLUs to database...")
     conn = init_db()
-    c = conn.cursor()
-    session_id = create_session(execution_type=1, user_id=user_id)
-    items = fetch_execution_items(session_id)
-    for item in items:
-        plu = item.get("pluNumber", {})
-        translations = plu.get("translations", {})
-        sl_title = translations.get("SI", {}).get("name")
-        c.execute("""
-            INSERT OR REPLACE INTO plu_items (id, plu_number_id, plu_number, title_si, image_src)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            item.get("id"),
-            plu.get("id"),
-            plu.get("pluNumber"),
-            sl_title,
-            plu.get("imageSrc")
-        ))
-    conn.commit()
-    conn.close()
+    try:
+        c = conn.cursor()
+        session_id = create_session(execution_type=1, user_id=user_id)
+        items = fetch_execution_items(session_id)
+        for item in items:
+            check_cancelled()
+            plu = item.get("pluNumber", {})
+            translations = plu.get("translations", {})
+            sl_title = translations.get("SI", {}).get("name")
+            c.execute("""
+                INSERT OR REPLACE INTO plu_items (id, plu_number_id, plu_number, title_si, image_src)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                item.get("id"),
+                plu.get("id"),
+                plu.get("pluNumber"),
+                sl_title,
+                plu.get("imageSrc")
+            ))
+        conn.commit()
+    finally:
+        conn.close()
     debug_print(f"Stored {len(items)} PLUs in the database")
 
 
@@ -194,42 +203,45 @@ def get_correct_plu_number(conn, plu_number_id):
 def submit_answers(items, wrong_count=0, progress_callback=None):
     debug_print(f"Submitting answers, wrong_count={wrong_count}")
     conn = sqlite3.connect(DB_FILE)
-    total = len(items)
-    wrong_indices = set(random.sample(range(total), wrong_count))
-    detailed_results = []
+    try:
+        total = len(items)
+        wrong_indices = set(random.sample(range(total), wrong_count))
+        detailed_results = []
 
-    for i, item in enumerate(items):
-        plu_number_id = item["pluNumberId"]
-        correct_plu = get_correct_plu_number(conn, plu_number_id)
+        for i, item in enumerate(items):
+            check_cancelled()
+            plu_number_id = item["pluNumberId"]
+            correct_plu = get_correct_plu_number(conn, plu_number_id)
 
-        if i in wrong_indices:
-            given_plu = "0000"
-            correct_flag = False
-        else:
-            given_plu = correct_plu
-            correct_flag = True
+            if i in wrong_indices:
+                given_plu = "0000"
+                correct_flag = False
+            else:
+                given_plu = correct_plu
+                correct_flag = True
 
-        payload = {
-            "execution_type": 3,
-            "given_plu_number": given_plu,
-            "plu_number_id": plu_number_id,
-            "answer": {"correct": correct_flag}
-        }
-        url = UPDATE_ANSWER_URL_TEMPLATE.format(item_id=item["id"])
-        session.put(url, json=payload)
+            payload = {
+                "execution_type": 3,
+                "given_plu_number": given_plu,
+                "plu_number_id": plu_number_id,
+                "answer": {"correct": correct_flag}
+            }
+            url = UPDATE_ANSWER_URL_TEMPLATE.format(item_id=item["id"])
+            session.put(url, json=payload).raise_for_status()
 
-        detailed_results.append({
-            "item_id": item["id"],
-            "plu_number_id": plu_number_id,
-            "given_plu": given_plu,
-            "correct": correct_flag
-        })
-        debug_print(f"Submitted item {i+1}/{total}: given_plu={given_plu}, correct={correct_flag}")
+            detailed_results.append({
+                "item_id": item["id"],
+                "plu_number_id": plu_number_id,
+                "given_plu": given_plu,
+                "correct": correct_flag
+            })
+            debug_print(f"Submitted item {i+1}/{total}: given_plu={given_plu}, correct={correct_flag}")
         
-        if progress_callback:
-            progress_callback(i + 1, total)
+            if progress_callback:
+                progress_callback(i + 1, total)
 
-    conn.close()
+    finally:
+        conn.close()
     return detailed_results
 
 
@@ -269,6 +281,7 @@ def run_session(
     user_id=None,
 ):
     def emit_progress(stage: str, progress: float, message: str = "", extra_data: dict = None):
+        check_cancelled()
         if progress_callback:
             data = {
                 "stage": stage,
@@ -298,13 +311,13 @@ def run_session(
         
         emit_progress("starting_execution", 40, "Zaganjanje izvajanja...")
         start_execution(test_session_id)
-        time.sleep(1)
+        wait(1)
         
         emit_progress("fetching_items", 50, "Pridobivanje elementov...")
         items = fetch_execution_items(test_session_id, execution_type=3)
         
         wrong_count = 0
-        if target_score:
+        if target_score is not None:
             total_items = len(items)
             correct_needed = int(total_items * (target_score / 100))
             wrong_count = total_items - correct_needed
@@ -346,6 +359,9 @@ def run_session(
             "average_score": average_score,
             "detailed_results": detailed_results
         }
+    except JobCancelled:
+        raise
     except Exception as e:
-        emit_progress("error", 0, str(e))
+        debug_print("Session failed:", e)
+        emit_progress("error", 0, client_error(e))
         raise

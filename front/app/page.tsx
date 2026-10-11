@@ -7,6 +7,7 @@ export default async function Home() {
   try {
     const response = await fetch(`${process.env.API_BASE_URL || "http://127.0.0.1:8000"}/health`, {
       cache: "no-store",
+      headers: { "X-Internal-Key": process.env.API_INTERNAL_KEY || "" },
       signal: AbortSignal.timeout(1500),
     })
     initialApiStatus = response.ok ? "online" : "error"

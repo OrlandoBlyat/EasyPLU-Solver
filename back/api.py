@@ -1,49 +1,112 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+import re
+from typing import Literal
+from body_limit import BodyLimitMiddleware
 from solver import run_session
+from jobs import job_scope, check_cancelled, JobCancelled, MAX_JOB_SECONDS
+from limits import limiter, client_ip, sms_limiter
+from single_worker import lifespan
+from errors import client_error
+from debug import log
+from fastapi.exceptions import RequestValidationError
 import json
 import asyncio
 import uuid
 import time
-from queue import Queue, Empty
-from threading import Event, Thread
+import secrets
+from pathlib import Path
+from starlette.requests import Request
+from queue import Queue, Empty, Full
+from threading import Event, Thread, Lock
 
-app = FastAPI(title="PLU Solver API")
+app = FastAPI(title="PLU Solver API", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=422, content={"detail": "Neveljavni podatki zahteve."})
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    log("solver", "API request failed:", exc)
+    return JSONResponse(status_code=500, content={"detail": client_error(exc)})
+
+_key_file = Path(__file__).resolve().parent.parent / ".api-key"
+_internal_key = _key_file.read_text().strip() if _key_file.exists() else ""
+
+
+@app.middleware("http")
+async def require_internal_key(request: Request, call_next):
+    if not _internal_key:
+        return JSONResponse(status_code=503, content={"detail": "API access is not configured"})
+    supplied = request.headers.get("x-internal-key", "")
+    if not secrets.compare_digest(supplied.encode(), _internal_key.encode()):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    return await call_next(request)
 
 otp_waiters: dict[str, dict] = {}
+otp_lock = Lock()
 
-# Allow frontend to access backend
+
+def run_owner(request):
+    owner = request.headers.get("x-run-owner", "")
+    if len(owner) != 64 or any(char not in "0123456789abcdef" for char in owner):
+        raise HTTPException(403, "Prijavna seja ni veljavna.")
+    return owner
+
+
 origins = [
-    "http://localhost:3000",  # your frontend URL
+    "http://localhost:3000",  
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # allow your frontend origin
+    allow_origins=origins,       
     allow_credentials=True,
-    allow_methods=["*"],         # allow all HTTP methods
-    allow_headers=["*"],         # allow all headers
+    allow_methods=["*"],         
+    allow_headers=["*"],        
 )
 
 class SessionRequest(BaseModel):
-    email: str
-    password: str
-    target_score: int | None = None
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=8, max_length=1024)
+    target_score: int | None = Field(default=None, ge=0, le=99, strict=True)
     full_knowledge: bool = False
-    login_method: str = "easyplu"
-    run_id: str | None = None
+    login_method: Literal["easyplu", "easy-plu", "sso"] = "easyplu"
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value):
+        if not value.strip():
+            raise ValueError("Empty username")
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_login_identity(self):
+        pattern = r"[0-9]{8}" if self.login_method == "sso" else r"[^\s@]+@[^\s@]+\.[^\s@]+"
+        if not re.fullmatch(pattern, self.email):
+            raise ValueError("Invalid login identity")
+        return self
 
 
 class OtpRequest(BaseModel):
-    run_id: str
-    otp: str
+    model_config = ConfigDict(extra="forbid")
+    run_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    otp: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
 
-def make_otp_callback(run_id: str, progress_queue: Queue | None = None, timeout: int = 150):
+
+app.add_middleware(BodyLimitMiddleware)
+
+def make_otp_callback(run_id: str, owner: str, progress_queue: Queue | None = None, timeout: int = 150):
     def otp_callback():
-        waiter = {"event": Event(), "code": None}
-        otp_waiters[run_id] = waiter
+        waiter = {"event": Event(), "code": None, "owner": owner}
+        with otp_lock:
+            otp_waiters[run_id] = waiter
         if progress_queue is not None:
             progress_queue.put({
                 "stage": "otp_required",
@@ -51,67 +114,124 @@ def make_otp_callback(run_id: str, progress_queue: Queue | None = None, timeout:
                 "message": "Vnesite SMS kodo iz Lidl prijave.",
                 "run_id": run_id,
             })
-        if not waiter["event"].wait(timeout=timeout):
-            otp_waiters.pop(run_id, None)
-            raise TimeoutError("Čas za vnos SMS kode je potekel")
-        code = waiter["code"]
-        otp_waiters.pop(run_id, None)
-        if not code:
-            raise RuntimeError("SMS koda ni bila poslana")
-        return code
+        try:
+            deadline = time.monotonic() + timeout
+            while not waiter["event"].wait(timeout=0.2):
+                check_cancelled()
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Čas za vnos SMS kode je potekel")
+            check_cancelled()
+            if not waiter["code"]:
+                raise RuntimeError("SMS koda ni bila poslana")
+            return waiter["code"]
+        finally:
+            with otp_lock:
+                if otp_waiters.get(run_id) is waiter:
+                    otp_waiters.pop(run_id, None)
 
     return otp_callback
 
 
 @app.post("/submit-otp")
-def submit_otp(req: OtpRequest):
-    waiter = otp_waiters.get(req.run_id)
-    if waiter is None:
-        raise HTTPException(status_code=404, detail="SSO prijava ne čaka na SMS kodo")
-    waiter["code"] = req.otp.strip()
-    waiter["event"].set()
+def submit_otp(req: OtpRequest, request: Request):
+    sms_limiter.check(client_ip(request))
+    owner = run_owner(request)
+    with otp_lock:
+        waiter = otp_waiters.get(req.run_id)
+        if waiter is None or not secrets.compare_digest(waiter["owner"], owner):
+            raise HTTPException(status_code=404, detail="SSO prijava ne čaka na SMS kodo")
+        otp_waiters.pop(req.run_id)
+        waiter["code"] = req.otp
+        waiter["event"].set()
     return {"status": "ok"}
 
 
 @app.post("/run-session")
-def run_plu_session(req: SessionRequest):
+async def run_plu_session(req: SessionRequest, request: Request):
+    owner = run_owner(request)
+    release = limiter.acquire(client_ip(request))
+    cancel = Event()
+    deadline = time.monotonic() + MAX_JOB_SECONDS
+
+    def work():
+        try:
+            with job_scope(cancel, deadline):
+                run_id = str(uuid.uuid4())
+                otp_callback = make_otp_callback(run_id, owner) if req.login_method == "sso" else None
+                return run_session(req.email, req.password, req.target_score,
+                                   login_method=req.login_method, otp_callback=otp_callback)
+        finally:
+            release()
+
     try:
-        run_id = req.run_id or str(uuid.uuid4())
-        otp_callback = make_otp_callback(run_id) if req.login_method == "sso" else None
-        result = run_session(
-            req.email,
-            req.password,
-            req.target_score,
-            login_method=req.login_method,
-            otp_callback=otp_callback,
-        )
-        return {"status": "success", "data": result}
+        task = asyncio.create_task(asyncio.to_thread(work))
+    except BaseException:
+        release()
+        raise
+    try:
+        while not task.done():
+            if time.monotonic() >= deadline:
+                raise HTTPException(408, "Čas izvajanja testa je potekel. Poskusite znova.")
+            if await request.is_disconnected():
+                cancel.set()
+                raise JobCancelled("Client disconnected")
+            await asyncio.sleep(0.2)
+        return {"status": "success", "data": await task}
+    except HTTPException:
+        raise
+    except JobCancelled:
+        raise HTTPException(status_code=499, detail="Povezava je bila prekinjena.") from None
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        log("solver", "Session request failed:", e)
+        raise HTTPException(status_code=500, detail=client_error(e)) from None
+    finally:
+        cancel.set()
+        if not task.done():
+            task.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
 
 @app.post("/run-session-stream")
-async def run_plu_session_stream(req: SessionRequest):
+async def run_plu_session_stream(req: SessionRequest, request: Request):
     """Stream solver progress using Server-Sent Events"""
-    progress_queue = Queue()
+    owner = run_owner(request)
+    release = limiter.acquire(client_ip(request))
+    progress_queue = Queue(maxsize=64)
+    cancel = Event()
+    deadline = time.monotonic() + MAX_JOB_SECONDS
     result_container = {"result": None, "error": None}
     
     def emit_progress(data):
-        progress_queue.put(data)
-    
+        while not cancel.is_set():
+            try:
+                progress_queue.put(data, timeout=0.2)
+                return
+            except Full:
+                continue
+        raise JobCancelled("Client disconnected")
+
     def run_solver():
         try:
+            with job_scope(cancel, deadline):
+                run_worker()
+        except JobCancelled:
+            log("solver", "Job cancelled after client disconnect")
+        finally:
+            release()
+
+    def run_worker():
+        try:
             attempt = 0
-            max_attempts = 50  # Safety limit to prevent infinite loops
-            run_id = req.run_id or str(uuid.uuid4())
-            otp_callback = make_otp_callback(run_id, progress_queue) if req.login_method == "sso" else None
+            max_attempts = 50
+            run_id = str(uuid.uuid4())
+            otp_callback = make_otp_callback(run_id, owner, progress_queue) if req.login_method == "sso" else None
             authenticated_user_id = None
             
             while attempt < max_attempts:
+                check_cancelled()
                 attempt += 1
-                progress_queue.put({
+                emit_progress({
                     "stage": "attempt_start",
                     "progress": 0,
-                    "message": f"Poskus {attempt}...",
+                    "message": "Pripravljam test...",
                     "attempt": attempt,
                     "user_knowledge": None
                 })
@@ -132,22 +252,21 @@ async def run_plu_session_stream(req: SessionRequest):
                 
                 user_knowledge = result.get("user_knowledge", 0)
                 
-                progress_queue.put({
+                emit_progress({
                     "stage": "attempt_complete",
                     "progress": 90,
-                    "message": f"Poskus {attempt} končan. Znanje: {user_knowledge:.2f}%",
+                    "message": "Preverjam doseženo znanje...",
                     "attempt": attempt,
                     "user_knowledge": user_knowledge,
                     "result": result
                 })
                 
-                # If full_knowledge is enabled, check if we need to continue
                 if req.full_knowledge:
                     if user_knowledge >= 100.0:
-                        progress_queue.put({
+                        emit_progress({
                             "stage": "final",
                             "progress": 100,
-                            "message": f"Končano! Doseženo 100% znanje po {attempt} poskusih.",
+                            "message": "Končano! Doseženo 100 % znanje.",
                             "attempt": attempt,
                             "user_knowledge": user_knowledge,
                             "result": result
@@ -155,18 +274,16 @@ async def run_plu_session_stream(req: SessionRequest):
                         result_container["result"] = result
                         break
                     else:
-                        # Continue to next attempt
-                        progress_queue.put({
+                        emit_progress({
                             "stage": "retrying",
                             "progress": 95,
-                            "message": f"Znanje: {user_knowledge:.2f}% < 100%. Nadaljujem s poskusom {attempt + 1}...",
+                            "message": "Test se samodejno nadaljuje do 100 % znanja.",
                             "attempt": attempt,
                             "user_knowledge": user_knowledge
                         })
                         continue
                 else:
-                    # Not requiring full knowledge, return after first attempt
-                    progress_queue.put({
+                    emit_progress({
                         "stage": "final",
                         "progress": 100,
                         "message": "Končano",
@@ -178,29 +295,39 @@ async def run_plu_session_stream(req: SessionRequest):
                     break
             
             if attempt >= max_attempts:
-                progress_queue.put({
+                emit_progress({
                     "stage": "error",
                     "progress": 0,
                     "message": f"Dosežena največja števila poskusov ({max_attempts}). Znanje: {result.get('user_knowledge', 0):.2f}%",
                     "error": "Max attempts reached"
                 })
+        except JobCancelled:
+            raise
         except Exception as e:
-            result_container["error"] = str(e)
-            progress_queue.put({"stage": "error", "progress": 0, "message": str(e), "error": str(e)})
+            message = client_error(e)
+            log("solver", "Stream worker failed:", e)
+            result_container["error"] = message
+            emit_progress({"stage": "error", "progress": 0, "message": message, "error": message})
         finally:
-            progress_queue.put(None)  # Signal end of stream
+            if not cancel.is_set():
+                emit_progress(None)
     
-    # Start solver in background thread
     solver_thread = Thread(target=run_solver, daemon=True)
-    solver_thread.start()
+    try:
+        solver_thread.start()
+    except BaseException:
+        release()
+        raise
     
     async def event_generator():
         try:
             yield ": connected\n\n"
             last_sent = time.monotonic()
             while True:
+                if time.monotonic() >= deadline:
+                    yield f"data: {json.dumps({'stage': 'error', 'message': 'Čas izvajanja testa je potekel. Poskusite znova.'})}\n\n"
+                    break
                 try:
-                    # Wait for progress update with timeout
                     data = progress_queue.get(timeout=0.1)
                 except Empty:
                     if time.monotonic() - last_sent >= 10:
@@ -220,10 +347,10 @@ async def run_plu_session_stream(req: SessionRequest):
                 if data.get("stage") in ["final", "error"]:
                     break
         except Exception as e:
-            yield f"data: {json.dumps({'stage': 'error', 'message': f'Stream error: {str(e)}'})}\n\n"
+            log("solver", "Progress stream failed:", e)
+            yield f"data: {json.dumps({'stage': 'error', 'message': client_error(e)})}\n\n"
         finally:
-            # Ensure we send a final message to close the stream
-            yield f"data: {json.dumps({'stage': 'closed'})}\n\n"
+            cancel.set()
     
     response = StreamingResponse(
         event_generator(),

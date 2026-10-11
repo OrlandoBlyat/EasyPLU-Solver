@@ -4,6 +4,7 @@
   "sso": true,
   "browser_events": false,
   "screenshots": false,
+  "session_state": true,
   "tracebacks": false,
   "frontend": false,
   "artifact_directory": "back/mylidl_debug"
