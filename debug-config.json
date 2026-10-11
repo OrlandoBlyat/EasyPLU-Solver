@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "solver": true,
+  "sso": true,
+  "browser_events": false,
+  "screenshots": false,
+  "tracebacks": false,
+  "frontend": false,
+  "artifact_directory": "back/mylidl_debug"
+}

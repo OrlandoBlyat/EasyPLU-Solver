@@ -5,10 +5,14 @@ from pydantic import BaseModel
 from solver import run_session
 import json
 import asyncio
+import uuid
+import time
 from queue import Queue, Empty
-from threading import Thread
+from threading import Event, Thread
 
 app = FastAPI(title="PLU Solver API")
+
+otp_waiters: dict[str, dict] = {}
 
 # Allow frontend to access backend
 origins = [
@@ -28,11 +32,59 @@ class SessionRequest(BaseModel):
     password: str
     target_score: int | None = None
     full_knowledge: bool = False
+    login_method: str = "easyplu"
+    run_id: str | None = None
+
+
+class OtpRequest(BaseModel):
+    run_id: str
+    otp: str
+
+def make_otp_callback(run_id: str, progress_queue: Queue | None = None, timeout: int = 150):
+    def otp_callback():
+        waiter = {"event": Event(), "code": None}
+        otp_waiters[run_id] = waiter
+        if progress_queue is not None:
+            progress_queue.put({
+                "stage": "otp_required",
+                "progress": 15,
+                "message": "Vnesite SMS kodo iz Lidl prijave.",
+                "run_id": run_id,
+            })
+        if not waiter["event"].wait(timeout=timeout):
+            otp_waiters.pop(run_id, None)
+            raise TimeoutError("Čas za vnos SMS kode je potekel")
+        code = waiter["code"]
+        otp_waiters.pop(run_id, None)
+        if not code:
+            raise RuntimeError("SMS koda ni bila poslana")
+        return code
+
+    return otp_callback
+
+
+@app.post("/submit-otp")
+def submit_otp(req: OtpRequest):
+    waiter = otp_waiters.get(req.run_id)
+    if waiter is None:
+        raise HTTPException(status_code=404, detail="SSO prijava ne čaka na SMS kodo")
+    waiter["code"] = req.otp.strip()
+    waiter["event"].set()
+    return {"status": "ok"}
+
 
 @app.post("/run-session")
 def run_plu_session(req: SessionRequest):
     try:
-        result = run_session(req.email, req.password, req.target_score)
+        run_id = req.run_id or str(uuid.uuid4())
+        otp_callback = make_otp_callback(run_id) if req.login_method == "sso" else None
+        result = run_session(
+            req.email,
+            req.password,
+            req.target_score,
+            login_method=req.login_method,
+            otp_callback=otp_callback,
+        )
         return {"status": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -50,6 +102,9 @@ async def run_plu_session_stream(req: SessionRequest):
         try:
             attempt = 0
             max_attempts = 50  # Safety limit to prevent infinite loops
+            run_id = req.run_id or str(uuid.uuid4())
+            otp_callback = make_otp_callback(run_id, progress_queue) if req.login_method == "sso" else None
+            authenticated_user_id = None
             
             while attempt < max_attempts:
                 attempt += 1
@@ -68,8 +123,12 @@ async def run_plu_session_stream(req: SessionRequest):
                     progress_callback=lambda data: emit_progress({
                         **data,
                         "attempt": attempt
-                    })
+                    }),
+                    login_method=req.login_method,
+                    otp_callback=otp_callback,
+                    user_id=authenticated_user_id,
                 )
+                authenticated_user_id = authenticated_user_id or result.get("user_id")
                 
                 user_knowledge = result.get("user_knowledge", 0)
                 
@@ -127,7 +186,7 @@ async def run_plu_session_stream(req: SessionRequest):
                 })
         except Exception as e:
             result_container["error"] = str(e)
-            progress_queue.put({"stage": "error", "progress": 0, "message": f"Napaka: {str(e)}", "error": str(e)})
+            progress_queue.put({"stage": "error", "progress": 0, "message": str(e), "error": str(e)})
         finally:
             progress_queue.put(None)  # Signal end of stream
     
@@ -137,11 +196,16 @@ async def run_plu_session_stream(req: SessionRequest):
     
     async def event_generator():
         try:
+            yield ": connected\n\n"
+            last_sent = time.monotonic()
             while True:
                 try:
                     # Wait for progress update with timeout
                     data = progress_queue.get(timeout=0.1)
                 except Empty:
+                    if time.monotonic() - last_sent >= 10:
+                        yield ": keep-alive\n\n"
+                        last_sent = time.monotonic()
                     await asyncio.sleep(0.1)
                     continue
                 
@@ -150,6 +214,7 @@ async def run_plu_session_stream(req: SessionRequest):
                 
                 # Send SSE formatted data
                 yield f"data: {json.dumps(data)}\n\n"
+                last_sent = time.monotonic()
                 
                 # If we got final result or error, break
                 if data.get("stage") in ["final", "error"]:
@@ -164,7 +229,7 @@ async def run_plu_session_stream(req: SessionRequest):
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         }

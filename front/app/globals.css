@@ -78,6 +78,7 @@
 @theme inline {
   /* optional: --font-sans, --font-serif, --font-mono if they are applied in the layout.tsx */
   --font-title: var(--font-space-grotesk);
+  --font-sans: var(--font-geist-sans);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -122,9 +123,12 @@
   }
   body {
     @apply bg-background text-foreground;
+    background-color: #f8fafc;
+  }
+  body.helena-cursor {
     background-image: url("/zepek.png");
     background-repeat: repeat;
-    background-size: 10%;
+    background-size: 100px;
   }
 }
 
@@ -132,5 +136,13 @@
   .helena-cursor,
   .helena-cursor * {
     cursor: url("/redbull_small.png") 8 8, auto !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

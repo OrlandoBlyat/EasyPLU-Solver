@@ -1,10 +1,2 @@
 FRONTEND
-    Language menu,
-    Maybe... custom logo?.
-
-BACKEND
-    Fix issue with full database missing when user that initialises it, has no/low amount of PLUs to learn,
-    Do SSO login option if god so provides,
-    Add AiO starting script, front/back end.
-
-DOCS
+    Language menu

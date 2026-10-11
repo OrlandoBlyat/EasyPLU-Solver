@@ -4,6 +4,9 @@ import requests
 import os
 import time
 
+from ssohandler import extract_user_id, sso_authenticate
+from debug import log
+
 BASE_URL = "https://easy-plu.knowledge-hero.com/api/plu"
 LOGIN_URL = f"{BASE_URL}/login"
 CREATE_SESSION_URL = f"{BASE_URL}/plu-learn/create-new-session"
@@ -13,27 +16,87 @@ UPDATE_ANSWER_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{item_id}}/update"
 RESULT_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{session_id}}/result"
 
 DB_FILE = "plu_items.db"
-DEBUG = True  # Set this to False to turn off debug prints
 session = requests.Session()
 
 
 def debug_print(*args):
-    if DEBUG:
-        print("[DEBUG]", *args)
+    log("solver", *args)
 
 
-def login(email: str, password: str):
-    debug_print("Logging in...")
+def apply_auth(token: str, user_id, cookies=None):
+    session.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json"})
+    if cookies:
+        for cookie in cookies:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if not name:
+                continue
+            kwargs = {"path": cookie.get("path") or "/"}
+            domain = (cookie.get("domain") or "").lstrip(".")
+            if domain:
+                kwargs["domain"] = domain
+            session.cookies.set(name, value, **kwargs)
+    debug_print(f"Authenticated as user_id={user_id}")
+    return user_id
+
+
+def login_easyplu(email: str, password: str):
+    debug_print("Logging in via EasyPLU...")
     payload = {"email": email, "password": password}
     r = session.post(LOGIN_URL, json=payload)
     r.raise_for_status()
     data = r.json()
-    debug_print("Login response:", data)
+    debug_print("Login response keys:", list(data))
     token = data.get("api_token")
+    if not token:
+        raise RuntimeError("EasyPLU login succeeded but no api_token was returned")
     user_id = data.get("user", {}).get("id") or data.get("id")
-    session.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json"})
-    debug_print(f"Logged in as user_id={user_id}")
+    return apply_auth(token, user_id)
+
+
+def login_sso(username: str, password: str, otp_callback=None):
+    debug_print("Logging in via Lidl SSO...")
+    result = sso_authenticate(username, password, otp_callback=otp_callback)
+    token = result.get("token")
+    user_id = result.get("user_id")
+    if not token:
+        raise RuntimeError("SSO login succeeded but no api_token was captured")
+    user_id = apply_auth(token, user_id, cookies=result.get("cookies"))
+    if not user_id:
+        user_id = extract_user_id(result.get("body"))
+    if not user_id:
+        for method in ("get", "post"):
+            try:
+                r = getattr(session, method)(f"{BASE_URL}/knowledge/user", json={}, timeout=30)
+                debug_print(
+                    f"knowledge/user {method.upper()}: status={r.status_code}, "
+                    f"content_type={r.headers.get('content-type')}"
+                )
+                if r.ok:
+                    body = r.json()
+                    debug_print(
+                        "knowledge/user response keys:",
+                        list(body) if isinstance(body, dict) else type(body).__name__,
+                    )
+                    user_id = extract_user_id(body)
+                    debug_print(f"knowledge/user user ID present: {bool(user_id)}")
+                    if user_id:
+                        break
+            except Exception as e:
+                debug_print(f"knowledge/user {method} failed: {e}")
+    if not user_id:
+        raise RuntimeError("SSO login succeeded but user_id was not found")
+    debug_print(f"SSO login complete, user_id={user_id}")
     return user_id
+
+
+def login(email: str, password: str, login_method: str = "easyplu", otp_callback=None):
+    method = (login_method or "easyplu").lower()
+    if method == "sso":
+        return login_sso(email, password, otp_callback=otp_callback)
+    if method in ("easyplu", "easy-plu"):
+        return login_easyplu(email, password)
+    raise ValueError(f"Unknown login_method: {login_method}")
 
 
 def create_session(execution_type, user_id):
@@ -196,7 +259,15 @@ def submit_result(session_id, user_id):
     return logical_result
 
 
-def run_session(email: str, password: str, target_score: int = None, progress_callback=None):
+def run_session(
+    email: str,
+    password: str,
+    target_score: int = None,
+    progress_callback=None,
+    login_method: str = "easyplu",
+    otp_callback=None,
+    user_id=None,
+):
     def emit_progress(stage: str, progress: float, message: str = "", extra_data: dict = None):
         if progress_callback:
             data = {
@@ -211,9 +282,13 @@ def run_session(email: str, password: str, target_score: int = None, progress_ca
         emit_progress("initializing", 0, "Začenjanje seje...")
         debug_print("Running test session...")
         
-        emit_progress("logging_in", 10, "Prijavljanje...")
-        user_id = login(email, password)
-        debug_print(f"Logged in, user_id={user_id}")
+        if user_id is None:
+            method_label = "Lidl SSO" if (login_method or "").lower() == "sso" else "EasyPLU"
+            emit_progress("logging_in", 10, f"Prijavljanje ({method_label})...")
+            user_id = login(email, password, login_method=login_method, otp_callback=otp_callback)
+            debug_print(f"Logged in, user_id={user_id}")
+        else:
+            debug_print(f"Reusing authenticated user_id={user_id}")
         
         emit_progress("storing_plus", 20, "Shranjevanje PLU podatkov...")
         store_all_plus_if_needed(user_id)
@@ -264,6 +339,7 @@ def run_session(email: str, password: str, target_score: int = None, progress_ca
         
         return {
             **result_data,
+            "user_id": user_id,
             "total_items": total_items,
             "correct_items": correct_items,
             "incorrect_items": incorrect_items,
@@ -271,5 +347,5 @@ def run_session(email: str, password: str, target_score: int = None, progress_ca
             "detailed_results": detailed_results
         }
     except Exception as e:
-        emit_progress("error", 0, f"Napaka: {str(e)}")
+        emit_progress("error", 0, str(e))
         raise

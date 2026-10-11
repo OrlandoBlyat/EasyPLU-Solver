@@ -13,8 +13,7 @@ const spaceGrotesk = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: "easyPLU solver",
-  description: "Created with v0",
-  generator: "v0.app",
+  description: "Prijava in spremljanje napredka easyPLU.",
   icons: {
     icon: "/favicon.ico",
   },
@@ -26,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="sl">
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable} ${spaceGrotesk.variable}`}>
         <Suspense fallback={<div>Loading...</div>}>{children}</Suspense>
       </body>

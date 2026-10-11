@@ -1,13 +1,15 @@
 "use client"
 
 import type React from "react"
+import debugConfig from "../../debug-config.json"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import Image from "next/image"
 import { Progress } from "@/components/ui/progress"
-import { X, Eye, EyeOff, Wifi, WifiOff, RefreshCw } from "lucide-react"
+import { X, Eye, EyeOff, Wifi, WifiOff, ArrowRight } from "lucide-react"
 
 interface SessionResult {
   final_result: number
@@ -24,7 +26,7 @@ interface SessionResult {
 
 type ApiStatus = "checking" | "online" | "offline" | "error"
 
-export function LoginForm() {
+export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?: ApiStatus }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [targetScore, setTargetScore] = useState<number | undefined>(undefined)
@@ -40,7 +42,10 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null)
   const [showBackground, setShowBackground] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  const [apiStatus, setApiStatus] = useState<ApiStatus>("checking")
+  const [apiStatus, setApiStatus] = useState<ApiStatus>(initialApiStatus)
+  const [otp, setOtp] = useState("")
+  const [runId, setRunId] = useState<string | null>(null)
+  const [otpSubmitting, setOtpSubmitting] = useState(false)
 
   useEffect(() => {
     const isHelena = email.toLowerCase().includes("helena")
@@ -49,36 +54,38 @@ export function LoginForm() {
   }, [email])
 
   useEffect(() => {
+    let active = true
+    let controller: AbortController | null = null
     const checkApiHealth = async () => {
+      controller = new AbortController()
+      const timeoutId = setTimeout(() => controller?.abort(), 5000)
       try {
-        setApiStatus("checking")
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 5000)
-
-        const response = await fetch("http://localhost:8000/health", {
+        const response = await fetch("/api/backend/health", {
           signal: controller.signal,
+          cache: "no-store",
         })
-
-        clearTimeout(timeoutId)
-
-        if (response.ok) {
-          setApiStatus("online")
-        } else {
-          setApiStatus("error")
-        }
+        if (active) setApiStatus(response.ok ? "online" : "error")
       } catch (err) {
-        setApiStatus("offline")
+        if (active) setApiStatus("offline")
+      } finally {
+        clearTimeout(timeoutId)
       }
     }
 
-    checkApiHealth()
+    if (initialApiStatus !== "online") checkApiHealth()
     const interval = setInterval(checkApiHealth, 30000) // Check every 30 seconds
 
-    return () => clearInterval(interval)
-  }, [])
+    return () => {
+      active = false
+      controller?.abort()
+      clearInterval(interval)
+    }
+  }, [initialApiStatus])
 
-  const handleEasyPLULogin = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const startSession = async (loginMethod: "easyplu" | "sso") => {
+    const nextRunId = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("")
     setIsRunning(true)
     setResult(null)
     setError(null)
@@ -88,16 +95,20 @@ export function LoginForm() {
     setSubmittedItems(null)
     setAttempt(0)
     setCurrentKnowledge(null)
+    setOtp("")
+    setRunId(nextRunId)
 
     try {
-      const response = await fetch("http://localhost:8000/run-session-stream", {
+      const response = await fetch("/api/backend/run-session-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          email, 
-          password, 
+        body: JSON.stringify({
+          email,
+          password,
           target_score: targetScore,
-          full_knowledge: true 
+          full_knowledge: true,
+          login_method: loginMethod,
+          run_id: nextRunId,
         }),
       })
 
@@ -131,6 +142,9 @@ export function LoginForm() {
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6))
+              if (data.stage === "closed") {
+                throw new Error("Povezava se je zaprla pred zaključkom testa. Poskusite znova.")
+              }
               
               setCurrentStage(data.stage || "")
               setCurrentMessage(data.message || "")
@@ -162,11 +176,17 @@ export function LoginForm() {
                 return
               }
             } catch (parseError) {
-              console.error("Error parsing SSE data:", parseError)
+              if (parseError instanceof Error && !(parseError instanceof SyntaxError)) {
+                throw parseError
+              }
+              if (debugConfig.enabled && debugConfig.frontend) {
+                console.error("[EasyPLU] Invalid progress event")
+              }
             }
           }
         }
       }
+      throw new Error("Povezava se je prekinila pred zaključkom testa. Poskusite znova.")
     } catch (err: any) {
       if (err.message && err.message.includes("401")) {
         setError("Napačni podatki, preveri geslo ali uporabniško ime!")
@@ -177,10 +197,50 @@ export function LoginForm() {
     }
   }
 
+  const handleEasyPLULogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await startSession("easyplu")
+  }
+
+  const handleSsoLogin = async () => {
+    if (!email.trim() || !password) {
+      setError("Vnesite uporabniško ime in geslo")
+      return
+    }
+    await startSession("sso")
+  }
+
+  const handleSubmitOtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!runId || !otp.trim() || otpSubmitting) return
+
+    setOtpSubmitting(true)
+    setError(null)
+    try {
+      const response = await fetch("/api/backend/submit-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: runId, otp: otp.trim() }),
+      })
+      if (!response.ok) {
+        const detail = await response.text()
+        throw new Error(detail || `HTTP error! status: ${response.status}`)
+      }
+      setOtp("")
+      setCurrentStage((stage) => stage === "otp_required" ? "logging_in" : stage)
+      setCurrentMessage("SMS koda poslana, čakam na prijavo...")
+    } catch (err: any) {
+      setError(err.message || "Napaka pri pošiljanju SMS kode")
+    } finally {
+      setOtpSubmitting(false)
+    }
+  }
+
   const getStageLabel = (stage: string): string => {
     const stageLabels: Record<string, string> = {
       initializing: "Začenjanje",
       logging_in: "Prijavljanje",
+      otp_required: "SMS koda",
       storing_plus: "Shranjevanje PLU podatkov",
       creating_session: "Ustvarjanje seje",
       starting_execution: "Zaganjanje izvajanja",
@@ -196,79 +256,60 @@ export function LoginForm() {
     return stageLabels[stage] || stage
   }
 
-  const getStatusConfig = () => {
-    switch (apiStatus) {
-      case "checking":
-        return {
-          icon: RefreshCw,
-          text: "Preverjanje API...",
-          bgColor: "bg-yellow-100 dark:bg-yellow-950/30",
-          textColor: "text-yellow-800 dark:text-yellow-300",
-          borderColor: "border-yellow-300 dark:border-yellow-700",
-          iconClass: "animate-spin",
-        }
-      case "online":
-        return {
-          icon: Wifi,
-          text: "API Povezan",
-          bgColor: "bg-green-100 dark:bg-green-950/30",
-          textColor: "text-green-800 dark:text-green-300",
-          borderColor: "border-green-300 dark:border-green-700",
-          iconClass: "",
-        }
-      case "offline":
-        return {
-          icon: WifiOff,
-          text: "API Nedostopen",
-          bgColor: "bg-red-100 dark:bg-red-950/30",
-          textColor: "text-red-800 dark:text-red-300",
-          borderColor: "border-red-300 dark:border-red-700",
-          iconClass: "",
-        }
-      case "error":
-        return {
-          icon: WifiOff,
-          text: "API Napaka",
-          bgColor: "bg-orange-100 dark:bg-orange-950/30",
-          textColor: "text-orange-800 dark:text-orange-300",
-          borderColor: "border-orange-300 dark:border-orange-700",
-          iconClass: "",
-        }
-    }
-  }
+  const isSubmittingAnswers = currentStage === "submitting_answers"
 
-  const statusConfig = getStatusConfig()
-  const StatusIcon = statusConfig.icon
+  const statusText = apiStatus === "online"
+    ? "API povezan"
+    : apiStatus === "checking"
+      ? "Preverjanje povezave API"
+      : "API nedostopen"
+  const StatusIcon = apiStatus === "online" || apiStatus === "checking" ? Wifi : WifiOff
 
   return (
     <>
-      {!showBackground && <div className="fixed inset-0 bg-white z-0" style={{ pointerEvents: "none" }} />}
-      <Card className="w-full max-w-md relative z-10 mx-4 sm:mx-0">
-        <CardHeader className="space-y-1 text-center px-4 sm:px-6">
-          <CardTitle className="text-2xl sm:text-3xl font-title font-bold tracking-tight">easyPLU solver</CardTitle>
-          <div className="flex justify-center pt-2">
-            <div
-              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border ${statusConfig.bgColor} ${statusConfig.borderColor} transition-all duration-300`}
+      {!showBackground && <div className="fixed inset-0 bg-slate-50 z-0" style={{ pointerEvents: "none" }} />}
+      <Card className="w-full max-w-md relative z-10 border-slate-200/80 rounded-3xl py-7 shadow-xl shadow-slate-900/5 sm:py-8">
+        <CardHeader className="px-6 sm:px-8">
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="min-w-0 flex-1">
+              <Image
+                src="/easyplu-solver-logo.png"
+                alt="EasyPLU solver"
+                width={2172}
+                height={724}
+                priority
+                className="h-auto w-full max-w-72"
+              />
+            </h1>
+            <span
+              role="status"
+              aria-label={statusText}
+              title={statusText}
+              className={`flex h-10 w-10 shrink-0 items-center justify-center ${apiStatus === "online" ? "text-green-600" : "text-red-600"}`}
             >
-              <StatusIcon className={`w-4 h-4 ${statusConfig.textColor} ${statusConfig.iconClass}`} />
-              <span className={`text-xs font-medium ${statusConfig.textColor}`}>{statusConfig.text}</span>
-            </div>
+              <StatusIcon className={`h-5 w-5 ${apiStatus === "checking" ? "animate-pulse" : ""}`} aria-hidden="true" />
+            </span>
           </div>
         </CardHeader>
-        <CardContent className="space-y-6 px-4 sm:px-6">
-          <form onSubmit={handleEasyPLULogin} className="space-y-4">
+        <CardContent className="space-y-6 px-6 sm:px-8">
+          {!isRunning && (
+          <form onSubmit={handleEasyPLULogin} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium px-1">
-                Uporabniško ime (e-naslov)
+                Uporabniško ime ali e-naslov
               </Label>
               <Input
                 id="email"
-                type="email"
+                type="text"
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                disabled={isRunning}
                 placeholder="ime@primer.si"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="h-11"
+                className="h-12 rounded-xl border-slate-200 bg-slate-50/70 text-base shadow-none focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
               />
             </div>
             <div className="space-y-2">
@@ -284,13 +325,15 @@ export function LoginForm() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  className="h-11 pr-10"
+                  className="h-12 rounded-xl border-slate-200 bg-slate-50/70 pr-12 text-base shadow-none focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
+                  autoComplete="current-password"
+                  disabled={isRunning}
                 />
 
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 transition-colors"
+                  className="absolute right-0 top-0 flex h-12 w-12 items-center justify-center rounded-xl text-slate-500 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-blue-600 transition-colors"
                   aria-label={showPassword ? "Skrij geslo" : "Prikaži geslo"}
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
@@ -298,15 +341,16 @@ export function LoginForm() {
               </div>
             </div>
 
-            <div className="flex items-center space-x-2 px-1">
+            <div className="flex min-h-14 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-4">
               <input
                 type="checkbox"
                 id="customResult"
                 checked={showCustomResult}
                 onChange={(e) => setShowCustomResult(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                disabled={isRunning}
+                className="h-5 w-5 shrink-0 rounded border-slate-300 accent-blue-600 cursor-pointer"
               />
-              <Label htmlFor="customResult" className="text-sm font-medium cursor-pointer">
+              <Label htmlFor="customResult" className="flex min-h-14 flex-1 items-center text-sm font-medium cursor-pointer">
                 Rezultat po meri
               </Label>
             </div>
@@ -319,7 +363,9 @@ export function LoginForm() {
                   placeholder="Rezultat"
                   value={targetScore ?? ""}
                   onChange={(e) => setTargetScore(e.target.value ? Number(e.target.value) : undefined)}
-                  className="h-11 pr-8"
+                  className="h-12 rounded-xl border-slate-200 pr-8 text-base"
+                  aria-label="Rezultat po meri v odstotkih"
+                  disabled={isRunning}
                   min="0"
                   max="100"
                 />
@@ -328,29 +374,40 @@ export function LoginForm() {
             )}
 
             <div className="space-y-3 pt-2">
-              <p className="text-sm text-muted-foreground text-center py-2">Prijavite se z</p>
-              <div className="flex flex-row gap-3">
-                <Button type="submit" size="lg" className="flex-1 font-medium cursor-pointer" disabled={isRunning}>
-                  easyPLU
+              <p className="text-xs font-medium text-slate-500">IZBERITE NAČIN PRIJAVE</p>
+              <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
+                <Button type="submit" size="lg" className="h-12 rounded-xl bg-blue-600 font-semibold text-white hover:bg-blue-700 cursor-pointer" disabled={isRunning}>
+                  easyPLU <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </Button>
                 <Button
                   type="button"
                   size="lg"
                   variant="secondary"
-                  className="flex-1 font-medium cursor-not-allowed opacity-60"
-                  disabled
+                  className="h-12 rounded-xl border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  disabled={isRunning}
+                  onClick={handleSsoLogin}
                 >
                   Lidl SSO
                 </Button>
               </div>
             </div>
           </form>
+          )}
 
           {isRunning && (
-            <div className="flex flex-col items-center justify-center py-8 space-y-4">
-              <div className="w-full space-y-3">
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-blue-100 bg-blue-50/50 p-4 space-y-4">
+              <div className="w-full space-y-3" role="status" aria-live="polite">
                 {/* Stage indicator */}
-                {currentStage && (
+                {isSubmittingAnswers ? (
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-medium text-slate-700">Oddajanje odgovorov</span>
+                    {submittedItems && (
+                      <span className="shrink-0 tabular-nums text-slate-500">
+                        {submittedItems.current} / {submittedItems.total}
+                      </span>
+                    )}
+                  </div>
+                ) : currentStage && (
                   <div className="text-center">
                     <p className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
                       {getStageLabel(currentStage)}
@@ -378,7 +435,8 @@ export function LoginForm() {
                 
                 {/* Progress bar */}
                 <div className="w-full space-y-2">
-                  <Progress value={progress} className="h-2" />
+                  <Progress value={progress} className="h-2 [&>div]:bg-blue-600" />
+                  {!isSubmittingAnswers && (
                   <div className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400">
                     <span>{Math.round(progress)}%</span>
                     {submittedItems && (
@@ -387,24 +445,47 @@ export function LoginForm() {
                       </span>
                     )}
                   </div>
+                  )}
                 </div>
 
+                {currentStage === "otp_required" && (
+                  <form onSubmit={handleSubmitOtp} className="space-y-3 pt-2">
+                    <Input
+                      id="otp"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      aria-label="SMS koda"
+                      placeholder="SMS koda"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value)}
+                      className="h-12 rounded-xl border-slate-200 bg-slate-50/70 text-base shadow-none focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
+                      required
+                    />
+                    <Button type="submit" className="h-12 w-full rounded-xl bg-blue-600 hover:bg-blue-700" disabled={otpSubmitting || !otp.trim()}>
+                      {otpSubmitting ? "Pošiljanje..." : "Pošlji SMS kodo"}
+                    </Button>
+                  </form>
+                )}
+
                 {/* Loading spinner */}
-                <div className="flex justify-center pt-2">
-                  <div className="relative w-12 h-12">
-                    <div className="absolute inset-0 rounded-full border-4 border-gray-200 dark:border-gray-700"></div>
-                    <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-blue-600 border-r-blue-500 animate-spin"></div>
+                {!isSubmittingAnswers && (
+                <div className="flex justify-start pt-1">
+                  <div className="relative w-6 h-6">
+                    <div className="absolute inset-0 rounded-full border-2 border-gray-200 dark:border-gray-700"></div>
+                    <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-600 border-r-blue-500 animate-spin"></div>
                   </div>
                 </div>
+                )}
               </div>
             </div>
           )}
 
           {result && (
-            <div className="mt-4 p-3 rounded-lg bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border border-green-200 dark:border-green-800 space-y-2 relative">
+            <div className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border border-green-200 dark:border-green-800 space-y-2 relative">
               <button
                 onClick={() => setResult(null)}
-                className="absolute top-2 right-2 p-1 rounded-full hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors touch-manipulation"
+                className="absolute top-1 right-1 flex h-11 w-11 items-center justify-center rounded-full hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors touch-manipulation"
                 aria-label="Zapri rezultate"
               >
                 <X className="w-4 h-4 text-green-700 dark:text-green-300" />
@@ -421,64 +502,64 @@ export function LoginForm() {
                 </h3>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
-                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Rezultat</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Rezultat</p>
                   <p className="text-base font-bold text-green-700 dark:text-green-400">
                     {result.final_result.toFixed(1)}%
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
-                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Znanje</p>
+                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Znanje</p>
                   <p className="text-base font-bold text-green-700 dark:text-green-400">
                     {result.user_knowledge.toFixed(1)}%
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
-                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Točke</p>
+                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Točke</p>
                   <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                     {result.total_user_points}/{result.max_points}
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
-                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Uvrstitev</p>
+                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Uvrstitev</p>
                   <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                     #{result.user_ranking_in_store}
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
-                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Gold Plus</p>
+                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Gold Plus</p>
                   <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                     {result.earned_gold_plus}/{result.total_gold_plus}
                   </p>
                 </div>
 
-                <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
-                  <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Elementi</p>
+                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Elementi</p>
                   <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                     {result.plu_execution_session_item_count}
                   </p>
                 </div>
               </div>
 
-              <div className="bg-white/60 dark:bg-white/5 rounded p-2 border border-green-100 dark:border-green-800">
-                <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-0.5">Čas izvajanja</p>
+              <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
+                <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Čas izvajanja</p>
                 <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{result.total_execution_time}s</p>
               </div>
             </div>
           )}
 
           {error && (
-            <div className="mt-4 p-4 rounded-lg bg-red-50 border border-red-200">
+            <div role="alert" className="mt-4 p-4 rounded-2xl bg-red-50 border border-red-200">
               <div className="flex items-center gap-2">
                 <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path fillRule="evenodd" d="M6 18L18 6M6 6l12 12" clipRule="evenodd" />
                 </svg>
-                <p className="text-sm text-red-700 font-medium">Napaka: {error}</p>
+                <p className="min-w-0 break-words text-sm text-red-700 font-medium">Napaka: {error}</p>
               </div>
             </div>
           )}
@@ -488,7 +569,8 @@ export function LoginForm() {
               href="https://github.com/OrlandoBlyat/EasyPLU-Solver"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm text-gray-700 hover:text-black transition-colors"
+              aria-label="Projekt na GitHubu"
+              className="flex min-h-11 items-center gap-2 text-sm text-slate-500 hover:text-slate-900 transition-colors"
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
                 <path
@@ -497,8 +579,9 @@ export function LoginForm() {
                   clipRule="evenodd"
                 />
               </svg>
+              <span>GitHub</span>
             </a>
-            <p className="text-xs text-gray-500 text-center">© 2025 Orlando Dlugoš Čeh</p>
+            <p className="text-xs text-gray-500 text-center">© 2026 Orlando Dlugoš Čeh</p>
           </div>
         </CardContent>
       </Card>

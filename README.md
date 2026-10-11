@@ -1,204 +1,60 @@
-![Lidl EasyPLU Logo](https://easy-plu.knowledge-hero.com/plufiles/default/lidl-leon-logo-new-png_4046_100x100.webp)
+<p align="center">
+  <img src="front/public/easyplu-solver-logo.png" alt="EasyPLU solver" width="360" />
+</p>
 
-## EasyPLU Solver
+# EasyPLU solver
 
-**Disclaimer:** Lidl is a trademark owned by the Schwarz Group. EasyPLU is a product of Knowledge Hero. This project is intended for educational purposes only. Use responsibly and respect all applicable terms of service.
+Automate EasyPLU training sessions with a mobile-friendly interface and live progress.
 
-***
+- **Two login options:** EasyPLU credentials or Lidl SSO with SMS verification.
+- **Automatic sessions:** submit answers and repeat until 100% knowledge or the 50-attempt limit.
+- **Custom score:** optionally choose a target result.
+- **Live results:** score, knowledge, points, store ranking, and execution time.
 
-### Overview
+Built with Next.js, TypeScript, Tailwind CSS, FastAPI, Playwright, and SQLite.
 
-**EasyPLU Solver** is a web application designed to **automate PLU (Price Look-Up) training sessions** on the **EasyPLU platform**. It consists of a **FastAPI backend** and a **Next.js frontend** with real-time progress tracking.
+## Quick start
 
-**⚠️ Important:** You must use your **EasyPLU login credentials** directly. **Do not use the Lidl SSO login.**
-
-The application will:
-1.  Fetch all **PLU numbers** and store them locally in a **SQLite database**.
-2.  Start a **PLU test session** on EasyPLU.
-3.  Automatically **submit all correct answers** in the order they appear.
-4.  **Automatically loop** until **100% user knowledge** is achieved.
-5.  Provide **real-time progress updates** with live status tracking.
-6.  Retrieve final **statistics** of the test session.
-
-***
-
-### Features
-
-* **Automatic PLU retrieval** and local caching in SQLite database.
-* **Test session initialization** and execution.
-* **Answer submission** in the correct order.
-* **Automatic looping** until 100% user knowledge is achieved.
-* **Real-time progress tracking** with Server-Sent Events (SSE).
-* **Live status updates** showing current stage, attempt number, and knowledge level.
-* **Progress bar** with detailed submission tracking.
-* **Modern web UI** built with Next.js and Tailwind CSS.
-* Fetch **final results** and display comprehensive statistics.
-
-***
-
-### Installation & Setup
-
-#### Prerequisites
-
-* **Python 3.8+**
-* **Node.js 18+** and **npm** (or **pnpm**)
-
-#### Step 1: Clone the Repository
+Requires **Python 3.10+**, **Node.js 20+**, and npm. Commands below use Bash.
 
 ```bash
 git clone https://github.com/OrlandoBlyat/EasyPLU-Solver.git
 cd EasyPLU-Solver
+
+python -m venv .venv
+source .venv/bin/activate
+pip install fastapi uvicorn requests pydantic playwright
+python -m playwright install chromium
+
+npm --prefix front install
+bash devstart.bash
 ```
 
-#### Step 2: Setup Backend
+Open **http://localhost:3000**. Enter your credentials, choose **easyPLU** or **Lidl SSO**, and enter the SMS code when prompted. The login form hides while the session runs.
 
-1.  **Navigate to the backend directory:**
-    ```bash
-    cd back
-    ```
+**On your phone:** connect to the same network and open `http://<computer-LAN-IP>:3000`. Allow port 3000 through your firewall if needed. API requests pass through the frontend; port 8000 can stay local.
 
-2.  **Install Python dependencies:**
-    ```bash
-    pip install fastapi uvicorn requests pydantic
-    ```
-    
-    Or create a virtual environment (recommended):
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    pip install fastapi uvicorn requests pydantic
-    ```
+## Configuration
 
-3.  **Start the FastAPI backend server:**
-    ```bash
-    uvicorn api:app --reload --port 8000
-    ```
-    
-    The backend will be available at `http://localhost:8000`
+| Setting | Default |
+| --- | --- |
+| Frontend | Port `3000` |
+| Backend | Port `8000` |
+| `API_BASE_URL` | `http://127.0.0.1:8000` — server-side frontend setting |
 
-#### Step 3: Setup Frontend
+To use a different backend, set `API_BASE_URL` in `front/.env.local` and restart the frontend.
 
-1.  **Open a new terminal and navigate to the frontend directory:**
-    ```bash
-    cd front
-    ```
+PLU data is cached in `back/plu_items.db`. SSO saves browser state in `back/mylidl_session.json`; debug artifacts go into `back/mylidl_debug/`. Keep session files and debug captures private.
 
-2.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
-    
-    Or if you prefer pnpm:
-    ```bash
-    pnpm install
-    ```
+**Debugging:** edit `debug-config.json`. `enabled` is the master switch; individual switches control solver/SSO logs, browser events, screenshots, tracebacks, and frontend console output. Restart both servers after changing it. Framework access logs are separate.
 
-3.  **Start the Next.js development server:**
-    ```bash
-    npm run dev
-    ```
-    
-    Or with pnpm:
-    ```bash
-    pnpm dev
-    ```
+## Project layout
 
-4.  **Open your browser:**
-    Navigate to `http://localhost:3000`
+- `front/` — interface and API proxy.
+- `back/api.py` — endpoints, progress streaming, and SMS handling.
+- `back/solver.py` — authentication and session automation.
+- `back/ssohandler.py` — MyLidl browser automation.
 
-### Usage
+---
 
-1.  **Enter your credentials:**
-    - **Uporabniško ime (e-naslov)**: Your EasyPLU email
-    - **Geslo**: Your EasyPLU password
-    - **Optional**: Check "Rezultat po meri" to set a custom target score percentage
-
-2.  **Click "easyPLU"** to start the automated test session.
-
-3.  **Monitor progress:**
-    - Watch real-time updates showing the current stage
-    - View attempt number and current knowledge level
-    - See progress bar with detailed submission tracking
-    - The solver will automatically loop until 100% knowledge is achieved
-
-4.  **View results:**
-    - After completion, view comprehensive statistics
-    - Results include final score, knowledge percentage, points, ranking, and more
-
-***
-
-### Dependencies
-
-#### Backend (Python)
-
-The backend requires the following Python packages:
-
-* `fastapi` - Web framework for building the API
-* `uvicorn` - ASGI server for running FastAPI
-* `requests` - HTTP library for API calls
-* `pydantic` - Data validation using Python type annotations
-* `sqlite3` - Built-in Python library for database operations
-
-Install all dependencies:
-```bash
-pip install fastapi uvicorn requests pydantic
-```
-
-#### Frontend (Node.js)
-
-The frontend is built with:
-
-* **Next.js 15** - React framework
-* **React 18** - UI library
-* **TypeScript** - Type safety
-* **Tailwind CSS** - Styling
-* **Radix UI** - Accessible component primitives
-* **Lucide React** - Icons
-
-All dependencies are managed via `package.json` and installed with `npm install` or `pnpm install`.
-
-***
-
-### Database
-
-The script creates a SQLite database named **`plu_items.db`** to store PLU numbers. If the database already exists, it skips fetching PLUs again.
-
-***
-
-### Test Results
-
-After completing the test, the application will display comprehensive statistics including:
-
-* **Final result** - Overall test score percentage
-* **User knowledge** - Knowledge percentage (automatically reaches 100%)
-* **Points earned** - Total points vs maximum points
-* **Store ranking** - Your ranking position in the store
-* **Gold Plus** - Earned vs total Gold Plus points
-* **Items completed** - Number of PLU items processed
-* **Execution time** - Total time taken to complete all attempts
-
-### Architecture
-
-The application consists of two main components:
-
-* **Backend (`/back`)**: FastAPI server that handles:
-  - User authentication
-  - PLU database management
-  - Test session execution
-  - Real-time progress streaming via Server-Sent Events (SSE)
-  - Automatic looping until 100% knowledge
-
-* **Frontend (`/front`)**: Next.js application that provides:
-  - User-friendly login interface
-  - Real-time progress visualization
-  - Live status updates
-  - Results display
-
-### Notes
-
-* The solver **automatically loops** until 100% user knowledge is achieved (no manual intervention needed).
-* PLU data is cached locally in `plu_items.db` to avoid repeated API calls.
-* The backend runs on port **8000** and the frontend on port **3000** by default.
-* Make sure both servers are running simultaneously for the application to work properly.
-
-***
+Independent educational project; not affiliated with Lidl or Knowledge Hero. Respect the platform's terms of service.
