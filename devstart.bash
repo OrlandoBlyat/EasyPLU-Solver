@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+source ./check-dependencies.bash
 
 service_pids=()
 cleanup() {
@@ -12,7 +13,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-(cd back && APP_ENV=development exec uvicorn api:app --reload --host 127.0.0.1 --port 8000) &
+(cd back && APP_ENV=development exec "$python_bin" -m uvicorn api:app --reload --host 127.0.0.1 --port 8000) &
 service_pids+=("$!")
 (cd front && exec node node_modules/next/dist/bin/next dev --hostname 0.0.0.0) &
 service_pids+=("$!")

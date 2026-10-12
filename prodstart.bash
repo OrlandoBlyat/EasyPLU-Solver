@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+source ./check-dependencies.bash
 
 if [[ ! -s .api-key || ! -f front/.env.local ]]; then
   if [[ ! -t 0 ]]; then
@@ -10,7 +11,7 @@ if [[ ! -s .api-key || ! -f front/.env.local ]]; then
   fi
   read -r -p "Backend access is not configured. Run setup-access.py now? [y/N] " setup_answer
   case "$setup_answer" in
-    [yY]|[yY][eE][sS]) python setup-access.py ;;
+    [yY]|[yY][eE][sS]) "$python_bin" setup-access.py ;;
     *) echo "Setup skipped. Startup cancelled."; exit 1 ;;
   esac
   if [[ ! -s .api-key || ! -f front/.env.local ]]; then
@@ -28,33 +29,6 @@ frontend_port="${FRONTEND_PORT:-3000}"
 backend_port="${BACKEND_PORT:-8000}"
 export API_BASE_URL="${API_BASE_URL:-http://127.0.0.1:${backend_port}}"
 
-if ! command -v uvicorn >/dev/null; then
-  if [[ ! -t 0 ]]; then
-    echo "uvicorn is missing. Activate the project's Python environment first." >&2
-    exit 1
-  fi
-  read -r -p "uvicorn is missing. Activate the project's virtual environment now? [y/N] " activate_answer
-  case "$activate_answer" in
-    [yY]|[yY][eE][sS])
-      if [[ -f .venv/bin/activate ]]; then
-        source .venv/bin/activate
-      elif [[ -f back/venv/bin/activate ]]; then
-        source back/venv/bin/activate
-      elif [[ -f venv/bin/activate ]]; then
-        source venv/bin/activate
-      else
-        echo "No virtual environment found. Create one using the README setup steps." >&2
-        exit 1
-      fi
-      ;;
-    *) echo "Activation skipped. Startup cancelled."; exit 1 ;;
-  esac
-  if ! command -v uvicorn >/dev/null; then
-    echo "uvicorn is still missing. Install the backend dependencies in this environment." >&2
-    exit 1
-  fi
-fi
-
 npm --prefix front run build
 
 service_pids=()
@@ -71,7 +45,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-(cd back && exec uvicorn api:app --host 127.0.0.1 --port "$backend_port" --workers 1) &
+(cd back && exec "$python_bin" -m uvicorn api:app --host 127.0.0.1 --port "$backend_port" --workers 1) &
 service_pids+=("$!")
 
 # Execute Next directly so signals reach its process without an npm wrapper.

@@ -1,5 +1,6 @@
 plu_items.db
 __pycache__/
+.venv/
 node_modules/
 .pnp/
 .pnp.js

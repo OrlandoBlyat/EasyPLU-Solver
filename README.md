@@ -15,19 +15,14 @@ Built with Next.js, TypeScript, Tailwind CSS, FastAPI, Playwright, and SQLite.
 
 ## Quick start
 
-Requires **Python 3.10+**, **Node.js 20+**, and npm. Commands below use Bash.
+Linux installer supports Debian/Ubuntu and Fedora. It installs system prerequisites with your approval, creates `.venv`, installs Python/frontend packages and Playwright Chromium, verifies browser startup, and configures API access. Requires Python 3.10+ and Node.js 20+ (older distribution packages must be upgraded). Use `bash install.bash --skip-system` if system dependencies are already installed.
 
 ```bash
 git clone https://github.com/OrlandoBlyat/EasyPLU-Solver.git
 cd EasyPLU-Solver
 
-python -m venv .venv
+bash install.bash
 source .venv/bin/activate
-pip install fastapi uvicorn requests pydantic playwright
-python -m playwright install chromium
-
-npm --prefix front install
-python setup-access.py
 bash devstart.bash
 ```
 
@@ -42,7 +37,9 @@ Runs use server-generated IDs. SMS submission requires the matching signed HttpO
 
 ## Configuration
 
-**Production:** activate the Python environment and run `bash prodstart.bash`. It builds Next.js, disables debugging, and runs one backend worker. Both services bind to loopback by default; serve them through an HTTPS reverse proxy. Optional settings: `FRONTEND_HOST`, `FRONTEND_PORT`, `BACKEND_PORT`, and `API_BASE_URL`.
+Both startup scripts check Python packages, Node/frontend dependencies, and Chromium before starting. Missing dependencies trigger an installer prompt; they automatically use the project virtual environment when present.
+
+**Production:** run `bash prodstart.bash`. It builds Next.js, disables debugging, and runs one backend worker. Both services bind to loopback by default; serve them through an HTTPS reverse proxy. Optional settings: `FRONTEND_HOST`, `FRONTEND_PORT`, `BACKEND_PORT`, and `API_BASE_URL`.
 
 | Setting | Default |
 | --- | --- |
