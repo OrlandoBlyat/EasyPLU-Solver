@@ -10,7 +10,13 @@ class EasyPluAuthenticationError(Exception):
     pass
 
 
+class PluDecryptionError(Exception):
+    pass
+
+
 def client_error(error):
+    if isinstance(error, PluDecryptionError):
+        return "PLU številke ni bilo mogoče dešifrirati. Preverite podatke in nastavitev vira PLU."
     if isinstance(error, EasyPluAuthenticationError):
         return "Napačen e-naslov ali geslo. Preverite podatke za easyPLU."
     if isinstance(error, SsoAuthenticationError):

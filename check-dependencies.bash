@@ -26,7 +26,9 @@ import sys
 if sys.version_info < (3, 10):
     raise SystemExit("Python 3.10+ is required.")
 missing = []
-for module in ("fastapi", "uvicorn", "requests", "pydantic", "playwright.sync_api"):
+modules = ["fastapi", "uvicorn", "requests", "pydantic", "playwright.sync_api"]
+modules.append("cryptography")
+for module in modules:
     try:
         importlib.import_module(module)
     except ImportError:

@@ -1,12 +1,11 @@
 import random
-import sqlite3
 import requests
-import os
 import time
 
 from ssohandler import extract_user_id, sso_authenticate
 from debug import log
-from errors import client_error, EasyPluAuthenticationError
+from errors import client_error, EasyPluAuthenticationError, PluDecryptionError
+from plu_decryption import DecryptedProducts
 from jobs import SessionProxy, check_cancelled, wait, JobCancelled
 
 BASE_URL = "https://easy-plu.knowledge-hero.com/api/plu"
@@ -17,7 +16,6 @@ START_EXECUTION_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{session_id}}/start-execu
 UPDATE_ANSWER_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{item_id}}/update"
 RESULT_URL_TEMPLATE = f"{BASE_URL}/plu-learn/{{session_id}}/result"
 
-DB_FILE = "plu_items.db"
 session = SessionProxy()
 
 
@@ -50,7 +48,7 @@ def login_easyplu(email: str, password: str):
         raise EasyPluAuthenticationError("EasyPLU credentials rejected")
     r.raise_for_status()
     data = r.json()
-    debug_print("Login response:", data)
+    debug_print("Login response keys:", list(data))
     token = data.get("api_token")
     if not token:
         raise RuntimeError("EasyPLU login succeeded but no api_token was returned")
@@ -128,7 +126,7 @@ def create_session(execution_type, user_id):
     return session_id
 
 
-def fetch_execution_items(session_id, execution_type=1):
+def fetch_execution_items(session_id, execution_type=1, products=None):
     debug_print(f"Fetching execution items for session_id={session_id}")
     url = EXECUTION_ITEMS_URL_TEMPLATE.format(session_id=session_id)
     payload = {"incrementCurrent": False, "activeLanguageLocale": "SI", "execution_type": execution_type}
@@ -136,55 +134,9 @@ def fetch_execution_items(session_id, execution_type=1):
     r.raise_for_status()
     items = r.json()["data"]["items"]
     debug_print(f"Fetched {len(items)} items")
+    if products is not None:
+        products.update(session_id, items)
     return items
-
-
-def init_db():
-    debug_print("Initializing database...")
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS plu_items (
-            id TEXT PRIMARY KEY,
-            plu_number_id INTEGER,
-            plu_number TEXT,
-            title_si TEXT,
-            image_src TEXT
-        )
-    """)
-    conn.commit()
-    return conn
-
-
-def store_all_plus_if_needed(user_id):
-    if os.path.exists(DB_FILE):
-        debug_print("Database exists, skipping PLU storage")
-        return
-    debug_print("Storing all PLUs to database...")
-    conn = init_db()
-    try:
-        c = conn.cursor()
-        session_id = create_session(execution_type=1, user_id=user_id)
-        items = fetch_execution_items(session_id)
-        for item in items:
-            check_cancelled()
-            plu = item.get("pluNumber", {})
-            translations = plu.get("translations", {})
-            sl_title = translations.get("SI", {}).get("name")
-            c.execute("""
-                INSERT OR REPLACE INTO plu_items (id, plu_number_id, plu_number, title_si, image_src)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                item.get("id"),
-                plu.get("id"),
-                plu.get("pluNumber"),
-                sl_title,
-                plu.get("imageSrc")
-            ))
-        conn.commit()
-    finally:
-        conn.close()
-    debug_print(f"Stored {len(items)} PLUs in the database")
 
 
 def start_execution(session_id):
@@ -193,55 +145,59 @@ def start_execution(session_id):
     session.post(url, json={}).raise_for_status()
 
 
-def get_correct_plu_number(conn, plu_number_id):
-    c = conn.cursor()
-    c.execute("SELECT plu_number FROM plu_items WHERE plu_number_id = ?", (plu_number_id,))
-    result = c.fetchone()
-    return result[0] if result else None
-
-
-def submit_answers(items, wrong_count=0, progress_callback=None):
+def submit_answers(items, wrong_count=0, progress_callback=None, products=None):
     debug_print(f"Submitting answers, wrong_count={wrong_count}")
-    conn = sqlite3.connect(DB_FILE)
-    try:
-        total = len(items)
-        wrong_indices = set(random.sample(range(total), wrong_count))
-        detailed_results = []
+    if products is None:
+        products = DecryptedProducts()
+        products.update(None, items)
+    total = len(items)
+    wrong_indices = set(random.sample(range(total), wrong_count))
+    detailed_results = []
 
-        for i, item in enumerate(items):
-            check_cancelled()
-            plu_number_id = item["pluNumberId"]
-            correct_plu = get_correct_plu_number(conn, plu_number_id)
+    for i, item in enumerate(items):
+        check_cancelled()
+        plu_number_id = item["pluNumberId"]
+        correct_plu = products.get(plu_number_id)
+        if correct_plu is None:
+            raise PluDecryptionError()
 
-            if i in wrong_indices:
-                given_plu = "0000"
-                correct_flag = False
-            else:
-                given_plu = correct_plu
-                correct_flag = True
+        if i in wrong_indices:
+            given_plu = "0000"
+            correct_flag = False
+        else:
+            given_plu = correct_plu
+            correct_flag = True
 
-            payload = {
-                "execution_type": 3,
-                "given_plu_number": given_plu,
-                "plu_number_id": plu_number_id,
-                "answer": {"correct": correct_flag}
-            }
-            url = UPDATE_ANSWER_URL_TEMPLATE.format(item_id=item["id"])
-            session.put(url, json=payload).raise_for_status()
+        payload = {
+            "execution_type": 3,
+            "given_plu_number": given_plu,
+            "plu_number_id": plu_number_id,
+            "answer": {"correct": correct_flag}
+        }
+        url = UPDATE_ANSWER_URL_TEMPLATE.format(item_id=item["id"])
+        debug_print(
+            f"Submitting item {i+1}/{total}: item_id={item['id']}, "
+            f"plu_number_id={plu_number_id}, decrypted={correct_plu is not None}",
+            "payload:", payload,
+        )
+        response = session.put(url, json=payload)
+        if not response.ok:
+            debug_print(
+                f"Answer update failed: HTTP {response.status_code}",
+                "response:", response.text[:4000],
+            )
+        response.raise_for_status()
+        detailed_results.append({
+            "item_id": item["id"],
+            "plu_number_id": plu_number_id,
+            "given_plu": given_plu,
+            "correct": correct_flag
+        })
+        debug_print(f"Submitted item {i+1}/{total}: given_plu={given_plu}, correct={correct_flag}")
+    
+        if progress_callback:
+            progress_callback(i + 1, total)
 
-            detailed_results.append({
-                "item_id": item["id"],
-                "plu_number_id": plu_number_id,
-                "given_plu": given_plu,
-                "correct": correct_flag
-            })
-            debug_print(f"Submitted item {i+1}/{total}: given_plu={given_plu}, correct={correct_flag}")
-        
-            if progress_callback:
-                progress_callback(i + 1, total)
-
-    finally:
-        conn.close()
     return detailed_results
 
 
@@ -293,6 +249,8 @@ def run_session(
     
     try:
         emit_progress("initializing", 0, "Začenjanje seje...")
+        debug_print("[PLU] Source: decrypt")
+        products = DecryptedProducts()
         debug_print("Running test session...")
         
         if user_id is None:
@@ -303,9 +261,6 @@ def run_session(
         else:
             debug_print(f"Reusing authenticated user_id={user_id}")
         
-        emit_progress("storing_plus", 20, "Shranjevanje PLU podatkov...")
-        store_all_plus_if_needed(user_id)
-        
         emit_progress("creating_session", 30, "Ustvarjanje seje...")
         test_session_id = create_session(execution_type=3, user_id=user_id)
         
@@ -314,7 +269,7 @@ def run_session(
         wait(1)
         
         emit_progress("fetching_items", 50, "Pridobivanje elementov...")
-        items = fetch_execution_items(test_session_id, execution_type=3)
+        items = fetch_execution_items(test_session_id, execution_type=3, products=products)
         
         wrong_count = 0
         if target_score is not None:
@@ -323,7 +278,7 @@ def run_session(
             wrong_count = total_items - correct_needed
         
         emit_progress("submitting_answers", 60, "Oddajanje odgovorov...", {"total_items": len(items), "submitted": 0})
-        detailed_results = submit_answers(items, wrong_count=wrong_count, progress_callback=lambda current, total: emit_progress(
+        detailed_results = submit_answers(items, wrong_count=wrong_count, products=products, progress_callback=lambda current, total: emit_progress(
             "submitting_answers",
             60 + (current / total) * 30,
             f"Oddajanje odgovorov: {current}/{total}",

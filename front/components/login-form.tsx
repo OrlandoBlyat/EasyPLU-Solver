@@ -36,6 +36,8 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   const [targetScore, setTargetScore] = useState<number | undefined>(undefined)
   const [showCustomResult, setShowCustomResult] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
+  const [testStarted, setTestStarted] = useState(false)
+  const [otpRequested, setOtpRequested] = useState(false)
   const [currentMessage, setCurrentMessage] = useState<string>("")
   const [currentStage, setCurrentStage] = useState<string>("")
   const [progress, setProgress] = useState<number>(0)
@@ -87,6 +89,8 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
 
   const startSession = async (loginMethod: "easyplu" | "sso") => {
     setIsRunning(true)
+    setTestStarted(false)
+    setOtpRequested(false)
     setResult(null)
     setError(null)
     setProgress(0)
@@ -144,6 +148,10 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6))
+              if (data.stage === "otp_required") setOtpRequested(true)
+              if (["creating_session", "starting_execution", "fetching_items", "submitting_answers", "submitting_result", "completed"].includes(data.stage)) {
+                setTestStarted(true)
+              }
               if (data.run_id) setRunId(data.run_id)
               if (data.stage === "closed") {
                 throw new Error("Povezava se je zaprla pred zaključkom testa. Poskusite znova.")
@@ -241,7 +249,6 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       initializing: "Začenjanje",
       logging_in: "Prijavljanje",
       otp_required: "SMS koda",
-      storing_plus: "Shranjevanje PLU podatkov",
       creating_session: "Ustvarjanje seje",
       starting_execution: "Zaganjanje izvajanja",
       fetching_items: "Pridobivanje elementov",
@@ -257,6 +264,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   }
 
   const isSubmittingAnswers = currentStage === "submitting_answers"
+  const showRunPanel = isRunning && (testStarted || otpRequested)
   const isSsoUsername = /^\d{8}$/.test(email.trim())
   const isEmailUsername = isEmail(email)
   const usernameInvalid = showUsernameWarning && Boolean(email.trim()) && !isSsoUsername && !isEmailUsername
@@ -296,7 +304,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           </div>
         </CardHeader>
         <CardContent className="space-y-6 px-6 sm:px-8">
-          {!isRunning && (
+          {!showRunPanel && (
           <form onSubmit={handleEasyPLULogin} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium px-1">
@@ -428,13 +436,17 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           </form>
           )}
 
-          {isRunning && (
+          {isRunning && !showRunPanel && (
+            <p role="status" className="text-center text-sm text-slate-500">Prijavljanje...</p>
+          )}
+
+          {isRunning && testStarted && (
             <p className="text-center text-xs leading-relaxed text-slate-500">
               Za dosego 100 % znanja se test po potrebi samodejno ponovi.
             </p>
           )}
 
-          {isRunning && (
+          {showRunPanel && (
             <div className="flex flex-col items-center justify-center rounded-2xl border border-blue-100 bg-blue-50/50 p-4 space-y-4">
               <div className="w-full space-y-3" role="status" aria-live="polite">
                 {/* Stage indicator */}

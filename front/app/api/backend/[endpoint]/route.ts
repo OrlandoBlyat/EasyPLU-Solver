@@ -13,8 +13,8 @@ async function proxy(request: Request, context: { params: Promise<{ endpoint: st
   const key = process.env.API_INTERNAL_KEY
   if (!key) return new Response("API access is not configured", { status: 503 })
   try {
-    const session = endpoint === "submit-otp" ? browserSession(request) : null
-    if (endpoint === "submit-otp" && !session) {
+    const session = request.method === "POST" ? browserSession(request) : null
+    if (request.method === "POST" && !session) {
       return Response.json({ detail: "Prijavna seja ni veljavna." }, { status: 403 })
     }
     const upstream = await fetch(`${process.env.API_BASE_URL || "http://127.0.0.1:8000"}/${endpoint}`, {

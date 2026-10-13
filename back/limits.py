@@ -46,7 +46,8 @@ limiter = JobLimiter()
 
 
 class SmsLimiter:
-    def __init__(self, per_minute=None):
+    def __init__(self, per_minute=None, message="Preveč SMS zahtev. Poskusite čez minuto."):
+        self.message = message
         self.per_minute = per_minute if per_minute is not None else max(1, int(os.getenv("SMS_SUBMISSIONS_PER_MINUTE", "10")))
         self.history = {}
         self.lock = Lock()
@@ -58,7 +59,7 @@ class SmsLimiter:
                             for key, values in self.history.items() if values and values[-1] > now - 60}
             entries = self.history.get(ip, deque())
             if len(entries) >= self.per_minute or len(self.history) >= 10000 and ip not in self.history:
-                raise HTTPException(429, "Preveč SMS zahtev. Poskusite čez minuto.", headers={"Retry-After": "60"})
+                raise HTTPException(429, self.message, headers={"Retry-After": "60"})
             entries.append(now)
             self.history[ip] = entries
 

@@ -11,7 +11,7 @@ Automate EasyPLU training sessions with a mobile-friendly interface and live pro
 - **Custom score:** optionally choose a target result.
 - **Live results:** score, knowledge, points, store ranking, and execution time.
 
-Built with Next.js, TypeScript, Tailwind CSS, FastAPI, Playwright, and SQLite.
+Built with Next.js, TypeScript, Tailwind CSS, FastAPI, Playwright, and AES decryption.
 
 ## Quick start
 
@@ -53,11 +53,13 @@ Limits: **2 active jobs**, **3 starts/minute/IP**, **10 SMS submissions/minute/I
 
 Run **one backend worker**. A local process lock rejects a second worker against the same checkout (Linux/macOS); multiple replicas require shared storage. Local proxied clients share one IP bucket. Separate device buckets require a trusted proxy that overwrites a client-IP header: set frontend `EDGE_CLIENT_IP_HEADER` and backend `TRUST_EDGE_CLIENT_IP=1`. Keep trust disabled without that proxy.
 
-PLU data is cached in `back/plu_items.db`. SSO saves browser state in `back/mylidl_session.json` only when development debugging and `session_state` are enabled (owner-only permissions); debug artifacts go into `back/mylidl_debug/`. Keep session files and debug captures private.
+PLU numbers are decrypted from execution items and kept in memory for each test. SSO saves browser state in `back/mylidl_session.json` only when development debugging and `session_state` are enabled (owner-only permissions); debug artifacts go into `back/mylidl_debug/`. Keep session files and debug captures private.
 
 **Debugging:** edit `debug-config.json`. `enabled` is the master switch; individual switches control solver/SSO logs, browser events, screenshots, session state, tracebacks, and frontend console output. Restart both servers after changing it. Backend debugging requires `APP_ENV=development` (set by `devstart.bash`); it is off by default and always off with `NODE_ENV=production`. Frontend debugging runs only in Next.js development mode. Development logs are unredacted; client errors stay generic. Framework access logs are separate.
 
 ## Project layout
+
+
 
 - `front/` — interface and API proxy.
 - `back/api.py` — endpoints, progress streaming, and SMS handling.

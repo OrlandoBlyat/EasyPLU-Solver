@@ -349,7 +349,6 @@ def login(page, username, password, otp_callback=None):
                     f"| state={state}"
                 )
 
-
             if (
                 state == "LOGIN_FORM"
                 and not credentials_submitted
