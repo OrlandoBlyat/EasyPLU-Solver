@@ -8,6 +8,7 @@ Automate EasyPLU training sessions with a mobile-friendly interface and live pro
 
 - **Two login options:** EasyPLU credentials or Lidl SSO with SMS verification.
 - **Automatic sessions:** submit answers and repeat until 100% knowledge or the 50-attempt limit.
+- **Two modes:** raise knowledge with **Dvig znanja**, or complete assigned **PLU Preverjanje** tasks with overall progress. Scheduled runs complete assignments before a regular test.
 - **Custom score:** optionally choose a target result.
 - **Live results:** score, knowledge, points, store ranking, and execution time.
 

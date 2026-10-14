@@ -4,7 +4,7 @@ import time
 
 from back.auth.ssohandler import extract_user_id, sso_authenticate
 from back.core.debug import log
-from back.core.errors import client_error, EasyPluAuthenticationError, PluDecryptionError
+from back.core.errors import client_error, EasyPluAuthenticationError, PluDecryptionError, AssignedTaskError
 from back.plu.decryption import DecryptedProducts
 from back.runtime.jobs import SessionProxy, check_cancelled, wait, JobCancelled
 
@@ -103,7 +103,7 @@ def login(email: str, password: str, login_method: str = "easyplu", otp_callback
     raise ValueError(f"Unknown login_method: {login_method}")
 
 
-def create_session(execution_type, user_id):
+def create_session(execution_type, user_id, assignment_id=None):
     debug_print(f"Creating session for user_id={user_id}, execution_type={execution_type}")
     payload = {
         "product_category_id": None,
@@ -119,6 +119,15 @@ def create_session(execution_type, user_id):
         "attribute_group_id": None,
         "ean_active": False
     }
+    if execution_type == 5:
+        if not assignment_id:
+            raise AssignedTaskError("Missing assignment ID")
+        payload = {
+            "product_category_id": None, "count_selection": 20, "user_id": user_id,
+            "language_id": 1, "execution_type": 5, "ean_active": True,
+            "top_article_active": 0, "plu_current_count": 1,
+            "assignment_id": assignment_id, "attribute_group_id": None,
+        }
     r = session.post(CREATE_SESSION_URL, json=payload)
     r.raise_for_status()
     session_id = r.json()["data"]["session_id"]
@@ -145,7 +154,7 @@ def start_execution(session_id):
     session.post(url, json={}).raise_for_status()
 
 
-def submit_answers(items, wrong_count=0, progress_callback=None, products=None):
+def submit_answers(items, wrong_count=0, progress_callback=None, products=None, execution_type=3):
     debug_print(f"Submitting answers, wrong_count={wrong_count}")
     if products is None:
         products = DecryptedProducts()
@@ -169,7 +178,7 @@ def submit_answers(items, wrong_count=0, progress_callback=None, products=None):
             correct_flag = True
 
         payload = {
-            "execution_type": 3,
+            "execution_type": execution_type,
             "given_plu_number": given_plu,
             "plu_number_id": plu_number_id,
             "answer": {"correct": correct_flag}
@@ -227,6 +236,56 @@ def submit_result(session_id, user_id):
     return logical_result
 
 
+def fetch_assigned_tasks():
+    response = session.get(f"{BASE_URL}/task")
+    response.raise_for_status()
+    tasks = response.json().get("tasks")
+    if not isinstance(tasks, list):
+        raise AssignedTaskError("Unexpected task response")
+    pending = {}
+    for task in tasks:
+        if task.get("type") != "plu_check":
+            continue
+        count = task.get("count", 0)
+        if type(count) is not int or count < 0:
+            raise AssignedTaskError("Invalid assignment count")
+        if not count:
+            continue
+        details = task.get("details") or {}
+        if details.get("task_type") != 5 or not details.get("assignment_id"):
+            raise AssignedTaskError("Unsupported PLU assignment")
+        assignment_id = details["assignment_id"]
+        pending[assignment_id] = max(pending.get(assignment_id, 0), count)
+    return pending
+
+
+def complete_assigned_tasks(run_task, emit_progress):
+    emit_progress("checking_tasks", 0, "Preverjanje dodeljenih nalog...")
+    pending = fetch_assigned_tasks()
+    completed = 0
+    emit_progress("assigned_tasks", 0, "PLU Preverjanje", {"tasks_completed": 0, "tasks_total": sum(pending.values())})
+    while pending:
+        check_cancelled()
+        if completed >= 50:
+            raise AssignedTaskError("Assignment session limit reached")
+        assignment_id, previous = next(iter(pending.items()))
+        emit_progress("assigned_tasks", 0, "PLU Preverjanje", {"tasks_completed": completed, "tasks_total": completed + sum(pending.values())})
+        run_task(assignment_id)
+        completed += 1
+        # Verify server state; allow a short delay for task bookkeeping.
+        for refresh in range(3):
+            if refresh:
+                wait(0.5)
+            updated = fetch_assigned_tasks()
+            if updated.get(assignment_id, 0) < previous:
+                break
+        else:
+            raise AssignedTaskError("Assignment count did not decrease after completion")
+        pending = updated
+        emit_progress("assigned_tasks", 100 if not pending else 0, "PLU Preverjanje", {"tasks_completed": completed, "tasks_total": completed + sum(pending.values())})
+    return completed
+
+
 def run_session(
     email: str,
     password: str,
@@ -235,6 +294,10 @@ def run_session(
     login_method: str = "easyplu",
     otp_callback=None,
     user_id=None,
+    execution_type=3,
+    assignment_id=None,
+    complete_tasks=True,
+    mode="all",
 ):
     def emit_progress(stage: str, progress: float, message: str = "", extra_data: dict = None):
         check_cancelled()
@@ -260,16 +323,34 @@ def run_session(
             debug_print(f"Logged in, user_id={user_id}")
         else:
             debug_print(f"Reusing authenticated user_id={user_id}")
+
+        tasks_completed = 0
+        if complete_tasks and execution_type == 3 and mode in ("all", "tasks"):
+            tasks_completed = complete_assigned_tasks(
+                lambda assignment: run_session(
+                    email, password, progress_callback=progress_callback,
+                    login_method=login_method, user_id=user_id, execution_type=5,
+                    assignment_id=assignment, complete_tasks=False,
+                ), emit_progress,
+            )
+        if mode == "tasks":
+            return {"user_id": user_id, "assigned_tasks_completed": tasks_completed, "tasks_only": True}
         
         emit_progress("creating_session", 30, "Ustvarjanje seje...")
-        test_session_id = create_session(execution_type=3, user_id=user_id)
+        test_session_id = create_session(execution_type=execution_type, user_id=user_id, assignment_id=assignment_id)
         
         emit_progress("starting_execution", 40, "Zaganjanje izvajanja...")
-        start_execution(test_session_id)
-        wait(1)
+        if execution_type != 5:
+            start_execution(test_session_id)
+            wait(1)
         
         emit_progress("fetching_items", 50, "Pridobivanje elementov...")
-        items = fetch_execution_items(test_session_id, execution_type=3, products=products)
+        items = fetch_execution_items(test_session_id, execution_type=execution_type, products=products)
+        if execution_type == 5:
+            if not items:
+                raise AssignedTaskError("Assignment returned no execution items")
+            start_execution(test_session_id)
+            wait(1)
         
         wrong_count = 0
         if target_score is not None:
@@ -278,7 +359,7 @@ def run_session(
             wrong_count = total_items - correct_needed
         
         emit_progress("submitting_answers", 60, "Oddajanje odgovorov...", {"total_items": len(items), "submitted": 0})
-        detailed_results = submit_answers(items, wrong_count=wrong_count, products=products, progress_callback=lambda current, total: emit_progress(
+        detailed_results = submit_answers(items, wrong_count=wrong_count, products=products, execution_type=execution_type, progress_callback=lambda current, total: emit_progress(
             "submitting_answers",
             60 + (current / total) * 30,
             f"Oddajanje odgovorov: {current}/{total}",
@@ -308,6 +389,7 @@ def run_session(
         return {
             **result_data,
             "user_id": user_id,
+            "assigned_tasks_completed": tasks_completed,
             "total_items": total_items,
             "correct_items": correct_items,
             "incorrect_items": incorrect_items,

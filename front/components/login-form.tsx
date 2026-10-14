@@ -12,6 +12,8 @@ import { Progress } from "@/components/ui/progress"
 import { X, Eye, EyeOff, Wifi, WifiOff, ArrowRight } from "lucide-react"
 
 interface SessionResult {
+  tasks_only?: boolean
+  assigned_tasks_completed?: number
   final_result: number
   total_user_points: number
   max_points: number
@@ -36,6 +38,8 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   const [targetScore, setTargetScore] = useState<number | undefined>(undefined)
   const [showCustomResult, setShowCustomResult] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
+  const [mode, setMode] = useState<"knowledge" | "tasks">("knowledge")
+  const [taskProgress, setTaskProgress] = useState<{ completed: number; total: number } | null>(null)
   const [testStarted, setTestStarted] = useState(false)
   const [otpRequested, setOtpRequested] = useState(false)
   const [currentMessage, setCurrentMessage] = useState<string>("")
@@ -89,6 +93,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
 
   const startSession = async (loginMethod: "easyplu" | "sso") => {
     setIsRunning(true)
+    setTaskProgress(null)
     setTestStarted(false)
     setOtpRequested(false)
     setResult(null)
@@ -108,8 +113,9 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
         body: JSON.stringify({
           email,
           password,
-          target_score: targetScore,
-          full_knowledge: true,
+          target_score: mode === "knowledge" && showCustomResult ? targetScore : undefined,
+          full_knowledge: mode === "knowledge",
+          mode,
           login_method: loginMethod,
         }),
       })
@@ -153,6 +159,10 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                 setTestStarted(true)
               }
               if (data.run_id) setRunId(data.run_id)
+              if (data.tasks_total !== undefined) {
+                setTaskProgress({ completed: data.tasks_completed, total: data.tasks_total })
+                setTestStarted(true)
+              }
               if (data.stage === "closed") {
                 throw new Error("Povezava se je zaprla pred zaključkom testa. Poskusite znova.")
               }
@@ -248,6 +258,8 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
     const stageLabels: Record<string, string> = {
       initializing: "Začenjanje",
       logging_in: "Prijavljanje",
+      checking_tasks: "Preverjanje nalog",
+      assigned_tasks: "PLU Preverjanje",
       otp_required: "SMS koda",
       creating_session: "Ustvarjanje seje",
       starting_execution: "Zaganjanje izvajanja",
@@ -306,6 +318,14 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
         <CardContent className="space-y-6 px-6 sm:px-8">
           {!showRunPanel && (
           <form onSubmit={handleEasyPLULogin} className="space-y-5">
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1" role="group" aria-label="Način izvajanja">
+              {([ ["knowledge", "Dvig znanja"], ["tasks", "PLU Preverjanje"] ] as const).map(([value, label]) => (
+                <button key={value} type="button" disabled={isRunning} aria-pressed={mode === value} onClick={() => setMode(value)}
+                  className={`min-h-12 rounded-lg px-2 text-sm font-medium transition-colors ${mode === value ? "bg-white text-blue-700 shadow-sm" : "text-slate-500"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium px-1">
                 Globalna številka ali e-naslov
@@ -378,7 +398,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               )}
             </div>
 
-            <div className="flex min-h-14 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-4">
+            {mode === "knowledge" && <div className="flex min-h-14 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-4">
               <input
                 type="checkbox"
                 id="customResult"
@@ -390,9 +410,9 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               <Label htmlFor="customResult" className="flex min-h-14 flex-1 items-center text-sm font-medium cursor-pointer">
                 Rezultat po meri
               </Label>
-            </div>
+            </div>}
 
-            {showCustomResult && (
+            {mode === "knowledge" && showCustomResult && (
               <div className="relative">
                 <Input
                   id="targetScore"
@@ -440,7 +460,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
             <p role="status" className="text-center text-sm text-slate-500">Prijavljanje...</p>
           )}
 
-          {isRunning && testStarted && (
+          {isRunning && testStarted && mode === "knowledge" && (
             <p className="text-center text-xs leading-relaxed text-slate-500">
               Za dosego 100 % znanja se test po potrebi samodejno ponovi.
             </p>
@@ -449,6 +469,15 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           {showRunPanel && (
             <div className="flex flex-col items-center justify-center rounded-2xl border border-blue-100 bg-blue-50/50 p-4 space-y-4">
               <div className="w-full space-y-3" role="status" aria-live="polite">
+                {mode === "tasks" && taskProgress && (
+                  <div className="space-y-2 border-b border-blue-100 pb-4">
+                    <div className="flex items-center justify-between gap-3 text-sm font-medium text-slate-700">
+                      <span>PLU Preverjanje</span>
+                      <span className="tabular-nums">{taskProgress.completed} / {taskProgress.total}</span>
+                    </div>
+                    <Progress aria-label="Napredek PLU preverjanj" value={taskProgress.total ? taskProgress.completed / taskProgress.total * 100 : 100} className="h-2 [&>div]:bg-blue-600" />
+                  </div>
+                )}
                 {/* Stage indicator */}
                 {isSubmittingAnswers ? (
                   <div className="flex items-center justify-between gap-3 text-sm">
@@ -468,7 +497,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                       <p className="text-xs text-gray-600 dark:text-gray-400">{currentMessage}</p>
                     )}
                     {/* Knowledge info */}
-                    {currentKnowledge !== null && (
+                    {mode === "knowledge" && currentKnowledge !== null && (
                       <div className="flex items-center justify-center gap-3 mt-2">
                         {currentKnowledge !== null && (
                           <span className="text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 px-2 py-1 rounded">
@@ -540,11 +569,13 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                   </svg>
                 </div>
                 <h3 className="text-sm font-semibold text-green-900 dark:text-green-100">
-                  Test uspešno zaključen
+                  {result.tasks_only ? "PLU Preverjanje zaključeno" : "Test uspešno zaključen"}
                 </h3>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {result.tasks_only ? (
+                <p className="py-2 text-sm text-green-800">{result.assigned_tasks_completed ? `Opravljena preverjanja: ${result.assigned_tasks_completed}` : "Ni dodeljenih PLU preverjanj."}</p>
+              ) : <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl border border-green-100 bg-white/60 p-3 dark:border-green-800 dark:bg-white/5">
                   <p className="mb-1 text-xs text-gray-600 dark:text-gray-400">Uvrstitev (v trgovini)</p>
                   <p className="text-xl font-bold text-green-700 dark:text-green-400">#{result.user_ranking_in_store}</p>
@@ -553,7 +584,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                   <p className="mb-1 text-xs text-gray-600 dark:text-gray-400">Znanje</p>
                   <p className="text-xl font-bold text-green-700 dark:text-green-400">{result.user_knowledge.toFixed(1)}%</p>
                 </div>
-              </div>
+              </div>}
             </div>
           )}
 

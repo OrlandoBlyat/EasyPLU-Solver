@@ -77,6 +77,7 @@ class SessionRequest(BaseModel):
     password: str = Field(min_length=8, max_length=1024)
     target_score: int | None = Field(default=None, ge=0, le=99, strict=True)
     full_knowledge: bool = False
+    mode: Literal["all", "knowledge", "tasks"] = "all"
     login_method: Literal["easyplu", "easy-plu", "sso"] = "easyplu"
 
     @field_validator("email")
@@ -159,7 +160,7 @@ async def run_plu_session(req: SessionRequest, request: Request):
                 run_id = str(uuid.uuid4())
                 otp_callback = make_otp_callback(run_id, owner) if req.login_method == "sso" else None
                 return run_session(req.email, req.password, req.target_score,
-                                   login_method=req.login_method, otp_callback=otp_callback)
+                                   login_method=req.login_method, otp_callback=otp_callback, mode=req.mode)
         finally:
             release()
 
@@ -247,6 +248,7 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                     login_method=req.login_method,
                     otp_callback=otp_callback,
                     user_id=authenticated_user_id,
+                    mode=req.mode,
                 )
                 authenticated_user_id = authenticated_user_id or result.get("user_id")
                 
@@ -261,7 +263,7 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                     "result": result
                 })
                 
-                if req.full_knowledge:
+                if req.full_knowledge and req.mode != "tasks":
                     if user_knowledge >= 100.0:
                         emit_progress({
                             "stage": "final",

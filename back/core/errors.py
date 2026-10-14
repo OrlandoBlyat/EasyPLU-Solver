@@ -13,7 +13,13 @@ class PluDecryptionError(Exception):
     pass
 
 
+class AssignedTaskError(Exception):
+    pass
+
+
 def client_error(error):
+    if isinstance(error, AssignedTaskError):
+        return "Dodeljenih nalog ni bilo mogoče potrditi. Preverite naloge v easyPLU in poskusite znova."
     if isinstance(error, PluDecryptionError):
         return "PLU številke ni bilo mogoče dešifrirati. Preverite podatke in nastavitev vira PLU."
     if isinstance(error, EasyPluAuthenticationError):
