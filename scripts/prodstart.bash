@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
-source ./check-dependencies.bash
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+source ./scripts/lib/check-dependencies.bash
 
 if [[ ! -s .api-key || ! -f front/.env.local ]]; then
   if [[ ! -t 0 ]]; then
-    echo "Configure backend access first: python setup-access.py" >&2
+    echo "Configure backend access first: python scripts/setup-access.py" >&2
     exit 1
   fi
-  read -r -p "Backend access is not configured. Run setup-access.py now? [y/N] " setup_answer
+  read -r -p "Backend access is not configured. Run scripts/setup-access.py now? [y/N] " setup_answer
   case "$setup_answer" in
-    [yY]|[yY][eE][sS]) "$python_bin" setup-access.py ;;
+    [yY]|[yY][eE][sS]) "$python_bin" scripts/setup-access.py ;;
     *) echo "Setup skipped. Startup cancelled."; exit 1 ;;
   esac
   if [[ ! -s .api-key || ! -f front/.env.local ]]; then
@@ -45,7 +45,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-(cd back && exec "$python_bin" -m uvicorn api:app --host 127.0.0.1 --port "$backend_port" --workers 1) &
+(exec "$python_bin" -m uvicorn back.api:app --host 127.0.0.1 --port "$backend_port" --workers 1) &
 service_pids+=("$!")
 
 # Execute Next directly so signals reach its process without an npm wrapper.

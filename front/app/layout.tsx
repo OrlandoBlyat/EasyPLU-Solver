@@ -15,7 +15,8 @@ export const metadata: Metadata = {
   title: "easyPLU solver",
   description: "Prijava in spremljanje napredka easyPLU.",
   icons: {
-    icon: "/favicon.ico",
+    icon: { url: "/easyplu-icon.png", type: "image/png" },
+    apple: "/easyplu-icon.png",
   },
 }
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 import secrets
 
-root = Path(__file__).resolve().parent
+root = Path(__file__).resolve().parents[1]
 key_path = root / ".api-key"
 if not key_path.exists():
     key_path.write_text(secrets.token_urlsafe(48) + "\n")

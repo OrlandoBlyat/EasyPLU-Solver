@@ -7,9 +7,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-from debug import ARTIFACT_DIRECTORY, enabled, log as debug_log, log_exception
-from jobs import check_cancelled, JobCancelled
-from errors import SsoAuthenticationError
+from back.core.debug import ROOT, ARTIFACT_DIRECTORY, enabled, log as debug_log, log_exception
+from back.runtime.jobs import check_cancelled, JobCancelled
+from back.core.errors import SsoAuthenticationError
 
 START_URL = (
     "https://mylidl.lidl.com/sap/bc/ui5_ui5/ui2/"
@@ -21,7 +21,7 @@ API_URL = (
     "api/plu/knowledge/user"
 )
 
-STATE_FILE = Path("mylidl_session.json")
+STATE_FILE = ROOT / "var" / "auth" / "mylidl_session.json"
 DEBUG_DIR = ARTIFACT_DIRECTORY
 
 LOGIN_TIMEOUT = 150
@@ -744,6 +744,7 @@ def sso_authenticate(username, password, otp_callback=None):
 
             if enabled("session_state"):
                 log("Saving browser session")
+                STATE_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 # Restrict access before writing cookies and tokens.
                 fd = os.open(STATE_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                 try:

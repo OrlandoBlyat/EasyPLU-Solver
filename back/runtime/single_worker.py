@@ -7,7 +7,7 @@ import os
 
 @asynccontextmanager
 async def lifespan(app):
-    path = Path(__file__).resolve().parent.parent / ".backend.lock"
+    path = Path(__file__).resolve().parents[2] / ".backend.lock"
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         try:

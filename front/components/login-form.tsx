@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import debugConfig from "../../debug-config.json"
+import debugConfig from "../../config/debug-config.json"
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -511,9 +511,9 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                 )}
 
                 {/* Loading spinner */}
-                {!isSubmittingAnswers && (
-                <div className="flex justify-start pt-1">
-                  <div className="relative w-6 h-6">
+                {isSubmittingAnswers && (
+                <div className="w-full pt-1">
+                  <div className="relative mx-auto h-6 w-6">
                     <div className="absolute inset-0 rounded-full border-2 border-gray-200 dark:border-gray-700"></div>
                     <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-600 border-r-blue-500 animate-spin"></div>
                   </div>
@@ -545,52 +545,14 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Rezultat</p>
-                  <p className="text-base font-bold text-green-700 dark:text-green-400">
-                    {result.final_result.toFixed(1)}%
-                  </p>
+                <div className="rounded-xl border border-green-100 bg-white/60 p-3 dark:border-green-800 dark:bg-white/5">
+                  <p className="mb-1 text-xs text-gray-600 dark:text-gray-400">Uvrstitev (v trgovini)</p>
+                  <p className="text-xl font-bold text-green-700 dark:text-green-400">#{result.user_ranking_in_store}</p>
                 </div>
-
-                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Znanje</p>
-                  <p className="text-base font-bold text-green-700 dark:text-green-400">
-                    {result.user_knowledge.toFixed(1)}%
-                  </p>
+                <div className="rounded-xl border border-green-100 bg-white/60 p-3 dark:border-green-800 dark:bg-white/5">
+                  <p className="mb-1 text-xs text-gray-600 dark:text-gray-400">Znanje</p>
+                  <p className="text-xl font-bold text-green-700 dark:text-green-400">{result.user_knowledge.toFixed(1)}%</p>
                 </div>
-
-                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Točke</p>
-                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    {result.total_user_points}/{result.max_points}
-                  </p>
-                </div>
-
-                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Uvrstitev</p>
-                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    #{result.user_ranking_in_store}
-                  </p>
-                </div>
-
-                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Gold Plus</p>
-                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    {result.earned_gold_plus}/{result.total_gold_plus}
-                  </p>
-                </div>
-
-                <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Elementi</p>
-                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    {result.plu_execution_session_item_count}
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-white/60 dark:bg-white/5 rounded-xl p-3 border border-green-100 dark:border-green-800">
-                <p className="text-xs text-gray-600 dark:text-gray-400 mb-0.5">Čas izvajanja</p>
-                <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{result.total_execution_time}s</p>
               </div>
             </div>
           )}

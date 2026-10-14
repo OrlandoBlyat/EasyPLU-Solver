@@ -1,0 +1,8 @@
+{
+  "interval_seconds": 3600,
+  "account_delay_seconds": 25,
+  "credentials_file": "test-credentials.json",
+  "api_url": "http://127.0.0.1:8000",
+  "request_timeout_seconds": 660,
+  "target_score": null
+}

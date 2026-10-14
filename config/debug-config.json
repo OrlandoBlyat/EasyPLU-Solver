@@ -7,5 +7,5 @@
   "session_state": true,
   "tracebacks": false,
   "frontend": false,
-  "artifact_directory": "back/mylidl_debug"
+  "artifact_directory": "var/debug"
 }

@@ -1,4 +1,3 @@
-"""Safe client messages; never include upstream exception text."""
 import requests
 
 

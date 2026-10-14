@@ -3,7 +3,7 @@ import base64
 import binascii
 import json
 import re
-from debug import log
+from back.core.debug import log
 
 _KEY = b"U2x2QdvosFTtk5nL0ejrKqLFP1tUDtSt"
 _IV = _KEY[:16]
@@ -28,7 +28,7 @@ def decryptPLU(encrypted_value):
             value = json.loads(value)
         return value if isinstance(value, str) and re.fullmatch(r"[0-9]+", value) else None
     except ImportError:
-        raise RuntimeError("Decryption mode requires cryptography; run install.bash") from None
+        raise RuntimeError("Decryption mode requires cryptography; run scripts/install.bash") from None
     except (ValueError, UnicodeError, binascii.Error):
         return None
 

@@ -64,12 +64,12 @@ PY
 
 if ! check_dependencies; then
   if [[ ! -t 0 ]]; then
-    echo "Dependencies are missing. Run: bash install.bash" >&2
+    echo "Dependencies are missing. Run: bash scripts/install.bash" >&2
     exit 1
   fi
-  read -r -p "Install missing dependencies now using install.bash? [y/N] " install_answer
+  read -r -p "Install missing dependencies now using scripts/install.bash? [y/N] " install_answer
   case "$install_answer" in
-    [yY]|[yY][eE][sS]) bash install.bash ;;
+    [yY]|[yY][eE][sS]) bash scripts/install.bash ;;
     *) echo "Installation skipped. Startup cancelled."; exit 1 ;;
   esac
   if ! check_dependencies; then

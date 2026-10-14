@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 install_system=true
 case "${1:-}" in
   --skip-system) install_system=false ;;
   --help|-h)
-    echo "Usage: bash install.bash [--skip-system]"
+    echo "Usage: bash scripts/install.bash [--skip-system]"
     echo "Install Python/Node prerequisites, .venv dependencies, Chromium, frontend packages and API access."
     echo "System packages require sudo. --skip-system uses existing system dependencies."
     exit 0 ;;
@@ -77,8 +77,8 @@ with sync_playwright() as p:
 print("Chromium startup verified")
 PY
 
-.venv/bin/python setup-access.py
+.venv/bin/python scripts/setup-access.py
 echo "Installation complete."
 echo "Activate Python: source .venv/bin/activate"
-echo "Development: bash devstart.bash"
-echo "Production:  bash prodstart.bash"
+echo "Development: bash scripts/devstart.bash"
+echo "Production:  bash scripts/prodstart.bash"

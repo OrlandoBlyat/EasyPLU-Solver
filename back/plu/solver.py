@@ -2,11 +2,11 @@ import random
 import requests
 import time
 
-from ssohandler import extract_user_id, sso_authenticate
-from debug import log
-from errors import client_error, EasyPluAuthenticationError, PluDecryptionError
-from plu_decryption import DecryptedProducts
-from jobs import SessionProxy, check_cancelled, wait, JobCancelled
+from back.auth.ssohandler import extract_user_id, sso_authenticate
+from back.core.debug import log
+from back.core.errors import client_error, EasyPluAuthenticationError, PluDecryptionError
+from back.plu.decryption import DecryptedProducts
+from back.runtime.jobs import SessionProxy, check_cancelled, wait, JobCancelled
 
 BASE_URL = "https://easy-plu.knowledge-hero.com/api/plu"
 LOGIN_URL = f"{BASE_URL}/login"

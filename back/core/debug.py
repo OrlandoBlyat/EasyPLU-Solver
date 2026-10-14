@@ -3,8 +3,8 @@ import logging
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-CONFIG = json.loads((ROOT / "debug-config.json").read_text())
+ROOT = Path(__file__).resolve().parents[2]
+CONFIG = json.loads((ROOT / "config" / "debug-config.json").read_text())
 ARTIFACT_DIRECTORY = ROOT / CONFIG["artifact_directory"]
 
 _logger = logging.getLogger("easyplu.debug")

@@ -27,7 +27,10 @@ Thumbs.db
 *.tsbuildinfo
 .cache/
 .api-key
+test-credentials.json
 .backend.lock
 mylidl_session.json
 mylidl_debug/
 .mylidl_session.json
+
+var/
