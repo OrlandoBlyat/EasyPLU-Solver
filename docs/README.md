@@ -40,7 +40,15 @@ Runs use server-generated IDs. SMS submission requires the matching signed HttpO
 
 Both startup scripts check Python packages, Node/frontend dependencies, and Chromium before starting. Missing dependencies trigger an installer prompt; they automatically use the project virtual environment when present.
 
-**Production:** run `bash scripts/prodstart.bash`. It builds Next.js, disables debugging, and runs one backend worker. Both services bind to loopback by default; serve them through an HTTPS reverse proxy. Optional settings: `FRONTEND_HOST`, `FRONTEND_PORT`, `BACKEND_PORT`, and `API_BASE_URL`.
+**Production:** run `bash scripts/prodstart.bash`. First startup asks for **Let's Encrypt**, **local HTTPS**, or an explicit **no-certificate/HTTP** exception. It saves the choice in ignored `config/https.local.json`. Change it with `bash scripts/prodstart.bash --configure-https`. Development stays HTTP and never requires certificates.
+
+- **Let's Encrypt:** enter a domain you control, point its A/AAAA records at the server, and open/forward TCP 80 and 443. Caddy obtains and renews the certificate while running. The script offers to install Caddy and grant low-port binding permission. Stop any conflicting web server first; do not run the whole app as root.
+- **Local HTTPS:** enter the hostname or LAN IP you will use (default port 8443). Caddy creates a local CA; trust `var/caddy-data/caddy/pki/authorities/local/root.crt` on each device to remove browser warnings. Only distribute that public certificate, never CA/private keys. Local mode does not require public DNS or internet port forwarding.
+- **No certificate:** HTTP only; credentials are unencrypted unless you supply your own HTTPS proxy. Defaults to loopback. This is an explicit exception to HTTPS, not a secure public deployment.
+
+Caddy forwards HTTPS to Next.js over loopback; FastAPI also stays on loopback. Both HTTPS modes preserve streaming progress and use secure owner cookies. Caddy state and certificates live in ignored `var/`; retain them across restarts for renewals. Optional settings: `FRONTEND_HOST` (HTTP mode only), `FRONTEND_PORT`, `BACKEND_PORT`, and `API_BASE_URL`.
+
+**Linux background/startup:** choose a run mode in production startup, or pass `--background` / `--startup`. Both use a user systemd service; startup mode asks to enable lingering so it runs at boot before login. Setup/build happens interactively first. Service restarts reuse the build. Stop with `systemctl --user stop easyplu-solver`; view logs with `journalctl --user -u easyplu-solver -f`; remove autostart with `systemctl --user disable easyplu-solver`. Requires systemd and an available user session bus. Keep the checkout and Python environment in place.
 
 | Setting | Default |
 | --- | --- |

@@ -17,7 +17,8 @@ export function browserSession(request: Request, create = false) {
   const fresh = !id
   id ||= randomBytes(32).toString("hex")
   const signature = createHmac("sha256", key).update(`browser-session:${id}`).digest("hex")
-  const secure = new URL(request.url).protocol === "https:" || process.env.NODE_ENV === "production"
+  const secure = new URL(request.url).protocol === "https:" ||
+    (process.env.NODE_ENV === "production" && process.env.ALLOW_INSECURE_HTTP !== "1")
   return {
     owner: createHash("sha256").update(id).digest("hex"),
     cookie: fresh ? `${COOKIE}=${id}.${signature}; Path=/; HttpOnly; SameSite=Strict${secure ? "; Secure" : ""}` : null,

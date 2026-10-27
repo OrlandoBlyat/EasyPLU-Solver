@@ -34,3 +34,4 @@ mylidl_debug/
 .mylidl_session.json
 
 var/
+config/https.local.json
