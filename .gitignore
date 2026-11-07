@@ -33,5 +33,8 @@ mylidl_session.json
 mylidl_debug/
 .mylidl_session.json
 
-var/
+var/*
+!var/plu-catalog/
+var/plu-catalog/*
+!var/plu-catalog/cache.json
 config/https.local.json

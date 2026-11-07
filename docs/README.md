@@ -80,6 +80,27 @@ python scripts/scheduled-tests.py
 
 Set `interval_seconds` in `config/scheduled-tests.json` (default: one hour after each batch). Accounts run sequentially; files reload before each batch. Use `--once` for a single batch. Each account runs one test; unattended SSO/SMS is unsupported. Credentials are gitignored. Keep the scheduler running, or supervise it with systemd for unattended operation.
 
+## PLU training handbook
+
+The optional catalogue tool fetches PLU numbers, product names and images, groups them by category, and creates an A4 PDF. Names prefer the Slovenian translation and fall back to the German (`DE`) entry when Slovenian is unavailable. Every page shows its category in the top-left. It is isolated in `tools/plu_catalog/` and can be removed without changing the solver.
+
+Category names use the platform translation when available, with Slovenian fallbacks for the known vegetable, bakery, fruit, and nut category IDs.
+Each category has its own color and vector icon in the page heading and product cards for faster visual recognition.
+
+```bash
+.venv/bin/python -m pip install -r tools/plu_catalog/requirements.txt
+.venv/bin/python scripts/export-plu-catalog.py --login-method easyplu
+```
+
+Run the exporter as your normal user, without `sudo`. Use `--login-method sso` for Lidl SSO; the terminal asks for the SMS code. Passwords are prompted securely and are not stored. The default output is `var/plu-catalog/plu-catalog.pdf`; use `--output FILE.pdf` to change it.
+
+Each run compares live products with the tracked `var/plu-catalog/cache.json`. Live PLU, name, category and image changes update the cache and its UTC `updated_at` timestamp automatically. Set a product's `"ignore"` field to `true` to preserve its cached values when EasyPLU contains outdated data. Products temporarily missing from the live response remain cached. Use `--cache FILE.json` to select another cache file.
+
+> [!CAUTION]
+> The included cache contains Slovenian PLUs and is only a dated snapshot. Check its top-level `updated_at` value before using it for training. Refresh it with the exporter to generate a current cache for your own store and market.
+
+Items without an extractable Slovenian name are saved in full to the ignored `var/plu-catalog/missing-names.json` for debugging, even if the export fails. Use `--missing-names FILE.json` to change its location.
+
 
 
 ## Project layout
