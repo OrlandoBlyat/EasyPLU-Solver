@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../front/public/easyplu-solver-logo.png" alt="EasyPLU solver" width="360" />
+  <img src="../frontend/public/easyplu-solver-logo.svg" alt="EasyPLU solver" width="360" />
 </p>
 
 # EasyPLU solver
@@ -27,9 +27,9 @@ source .venv/bin/activate
 bash scripts/devstart.bash
 ```
 
-Open **http://localhost:3000**. Enter your EasyPLU/MyLidl credentials, choose **easyPLU** or **Lidl SSO**, and enter the SMS code when prompted.
+Open **http://localhost:3000** on the host. Other devices on the same LAN can use **http://HOST_LAN_IP:3000**; `devstart.bash` prints available network URLs. Both the script and `npm --prefix frontend run dev` bind to `0.0.0.0`. Development hot reload allows the host’s network addresses automatically; use `DEV_ALLOWED_ORIGINS` (comma-separated hostnames) for additional local DNS names. Allow inbound TCP port 3000 in the host firewall if needed. The backend remains private on localhost; browsers use the frontend proxy. Enter your EasyPLU/MyLidl credentials, choose **easyPLU** or **Lidl SSO**, and enter the SMS code when prompted.
 
-The app is open; FastAPI requires a private key added by the frontend server. Keep `.api-key` and `front/.env.local` private and port 8000 bound to localhost. Missing key configuration blocks backend requests. The public proxy exposes only health, SMS submission, and session streaming; these remain publicly callable. Use HTTPS for network access.
+The app is open; FastAPI requires a private key added by the frontend server. Keep `.api-key` and `frontend/.env.local` private and port 8000 bound to localhost. Missing key configuration blocks backend requests. The public proxy exposes only health, SMS submission, and session streaming; these remain publicly callable. Use HTTPS for network access.
 
 Runs use server-generated IDs. SMS submission requires the matching signed HttpOnly browser cookie and is single-use; the app remains open without an app login.
 
@@ -56,7 +56,7 @@ Caddy forwards HTTPS to Next.js over loopback; FastAPI also stays on loopback. B
 | Backend | Port `8000` |
 | `API_BASE_URL` | `http://127.0.0.1:8000` — server-side frontend setting |
 
-To use a different backend, set `API_BASE_URL` in `front/.env.local` and restart the frontend.
+To use a different backend, set `API_BASE_URL` in `frontend/.env.local` and restart the frontend.
 
 Limits: **2 active jobs**, **3 starts/minute/IP**, **10 SMS submissions/minute/IP**, and **10 minutes/job**. Backend settings: `MAX_ACTIVE_JOBS`, `JOB_STARTS_PER_MINUTE`, `SMS_SUBMISSIONS_PER_MINUTE`, and `MAX_JOB_SECONDS`. Deadline cancellation takes effect after in-flight operations return; slots remain occupied until cleanup.
 
@@ -80,24 +80,36 @@ python scripts/scheduled-tests.py
 
 Set `interval_seconds` in `config/scheduled-tests.json` (default: one hour after each batch). Accounts run sequentially; files reload before each batch. Use `--once` for a single batch. Each account runs one test; unattended SSO/SMS is unsupported. Credentials are gitignored. Keep the scheduler running, or supervise it with systemd for unattended operation.
 
+## Self-service automatic tests
+
+After a successful **direct EasyPLU email/password test**, open **Orodja → Samodejni testi** within one minute of finishing the test. Read the warning and check the agreement box, then choose **Shrani prijavo in omogoči teste** to save encrypted EasyPLU credentials, or **Odstrani me iz samodejnih testov** to delete the enrollment. Lidl SSO enrollment is disabled; no SSO credentials, tokens, or cookies are retained by this scheduler. Existing token-based enrollments are removed when the backend starts; enroll again using direct EasyPLU login.
+
+The backend runs opted-in knowledge tests while it is running, using the interval and account delay from `config/scheduled-tests.json` (one hour and 25 seconds by default). Each run performs a fresh EasyPLU login and checks that its account ID matches the enrolled account before starting the test. Errors pause scheduling until another successful interactive test and re-enrollment. No separate scheduler command is needed. After a restart or one minute, complete another direct EasyPLU test to manage your account's schedule in that browser.
+
+Email/password credentials are Fernet encrypted in the private, ignored `var/schedules/accounts.sqlite3`. Pending enrollment credentials are also encrypted in server memory. The separate encryption key defaults to `~/.config/easyplu-solver/schedule.key`, outside the checkout, created automatically with mode 600. On backend startup an existing checkout `.schedule-key` is moved there without changing its value, preserving enrollments; conflicting keys stop startup rather than discarding credentials. **Keep this key separate from database backups.** For stronger separation, set `SCHEDULE_KEY_FILE` to an absolute, private key file outside the checkout (paths inside the checkout are rejected), provisioned through an OS credential or secrets service; its contents must be a Fernet key. The backend needs access to that key for unattended login, so compromise of the running server account can still expose credentials. Losing or replacing the key requires re-enrollment. API key rotation does not change the credential encryption key.
+
+Removal deletes the encrypted database entry and requests cancellation of any running automatic test; already submitted answers cannot be undone. Copies in backups or manually exported database fields are outside application deletion. The legacy CLI scheduler remains independent and uses its existing credentials file; remove its entries separately to avoid duplicate runs.
+
 ## PLU training handbook
 
-The optional catalogue tool fetches PLU numbers, product names and images, groups them by category, and creates an A4 PDF. Names prefer the Slovenian translation and fall back to the German (`DE`) entry when Slovenian is unavailable. Every page shows its category in the top-left. It is isolated in `tools/plu_catalog/` and can be removed without changing the solver.
+The web interface’s **Prenesi katalog PLU (PDF)** button downloads the categorized handbook from the current cache, without a CLI login. Every top-level test refreshes the catalog using its authenticated session before running, including PLU checking mode. A failed refresh leaves the previous cache available and allows the test to continue. Backend dependencies include the PDF libraries. Repeat downloads reuse the latest PDF in server memory until product data changes or the backend restarts. PDF-ready images are cached on disk, avoiding repeated resizing and compression. PDF rendering uses a separate lock so catalogue updates can continue during exports.
+
+The catalogue tool fetches PLU numbers, product names and images, groups them by category, and creates an A4 PDF. Names prefer the Slovenian translation and fall back to the German (`DE`) entry when Slovenian is unavailable. Every page shows its category in the top-left. Its generator in `backend/catalog/` is shared by the web interface and optional CLI.
 
 Category names use the platform translation when available, with Slovenian fallbacks for the known vegetable, bakery, fruit, and nut category IDs.
 Each category has its own color and vector icon in the page heading and product cards for faster visual recognition.
 
 ```bash
-.venv/bin/python -m pip install -r tools/plu_catalog/requirements.txt
+.venv/bin/python -m pip install -r backend/requirements.txt
 .venv/bin/python scripts/export-plu-catalog.py --login-method easyplu
 ```
 
 Run the exporter as your normal user, without `sudo`. Use `--login-method sso` for Lidl SSO; the terminal asks for the SMS code. Passwords are prompted securely and are not stored. The default output is `var/plu-catalog/plu-catalog.pdf`; use `--output FILE.pdf` to change it.
 
-Each run compares live products with the tracked `var/plu-catalog/cache.json`. Live PLU, name, category and image changes update the cache and its UTC `updated_at` timestamp automatically. Set a product's `"ignore"` field to `true` to preserve its cached values when EasyPLU contains outdated data. Products temporarily missing from the live response remain cached. Use `--cache FILE.json` to select another cache file.
+Each run compares live products with the ignored runtime cache `var/plu-catalog/cache.json`. On a fresh checkout, the tracked `data/catalog-seed.json` supplies the initial snapshot without overwriting existing local cache data. Live PLU, name, category and image changes update the cache and its UTC `updated_at` timestamp automatically. Set a product's `"ignore"` field to `true` to preserve its cached values when EasyPLU contains outdated data. Products temporarily missing from the live response remain cached. Use `--cache FILE.json` to select another cache file.
 
 > [!CAUTION]
-> The included cache contains Slovenian PLUs and is only a dated snapshot. Check its top-level `updated_at` value before using it for training. Refresh it with the exporter to generate a current cache for your own store and market.
+> The included seed contains Slovenian PLUs and is only a dated snapshot. Check its top-level `updated_at` value before using it for training. Run a test in the web interface to refresh it for your own store and market.
 
 Items without an extractable Slovenian name are saved in full to the ignored `var/plu-catalog/missing-names.json` for debugging, even if the export fails. Use `--missing-names FILE.json` to change its location.
 
@@ -105,15 +117,30 @@ Items without an extractable Slovenian name are saved in full to the ignored `va
 
 ## Project layout
 
-- `front/` — Next.js interface and API proxy.
-- `back/api.py` — API entry point.
-- `back/auth/`, `back/plu/` — SSO and PLU automation.
-- `back/core/`, `back/runtime/`, `back/security/` — logging, jobs, and protection.
-- `scripts/` — installation, startup, access setup, and scheduler.
-- `config/` — debug/scheduler settings and credentials template.
-- `docs/` — development notes.
-- `var/` — ignored runtime artifacts.
+- `frontend/` — Next.js interface and API proxy. Feature components live in `components/login/`, `components/scheduling/`, and `components/layout/`; `components/ui/` holds shared UI primitives. Server helpers live in `lib/server/`.
+- `backend/app.py` — FastAPI setup, middleware, and router registration; launch with `uvicorn backend.app:app`.
+- `backend/api/` — feature routers and request schemas.
+- `backend/auth/` — direct EasyPLU login, interactive Lidl SSO, and the job-local upstream client.
+- `backend/tests_runner/` — test execution, decryption, OTP, and progress streaming.
+- `backend/catalog/` — collection, cache persistence, safe image downloads, PDF rendering, and export orchestration.
+- `backend/scheduling/` — enrollment service, SQLite repository, encryption/key migration, settings, and worker.
+- `backend/infrastructure/` — request limits, cancellation, lifecycle, logging, and errors.
+- `backend/requirements.txt` — the single Python dependency definition, including PDF libraries.
+- `cli/` — optional catalogue exporter and legacy batch scheduler. Existing `scripts/export-plu-catalog.py` and `scripts/scheduled-tests.py` commands remain compatibility wrappers.
+- `scripts/` — installation, startup, access setup, and deployment helpers. Startup commands remain unchanged.
+- `config/` — non-secret settings; `data/` — tracked catalogue seed; `var/` — ignored runtime data.
+- `tests/` — tests grouped by feature; run `.venv/bin/python -m unittest discover -s tests -v`.
+
+Use npm and the sole `frontend/package-lock.json` for frontend dependencies. To build: `npm --prefix frontend run build`. The local `.env.local` moved with the frontend directory. Existing databases, runtime catalog overrides, and the external encryption key retain their locations.
+
+See [architecture.md](architecture.md) for responsibilities and migration notes.
 
 ---
 
 Independent educational project; not affiliated with Lidl or Knowledge Hero. Respect the platform's terms of service.
+
+## Download security and proxy client addresses
+
+PDF downloads use separate admission limits (one active download, ten starts per minute per client address) so they do not consume test slots or test rate limits. Without a configured trusted edge, requests conservatively share the proxy address. The supplied Caddy startup config overwrites `X-Real-IP`, sets `EDGE_CLIENT_IP_HEADER=x-real-ip` for Next.js and `TRUST_EDGE_CLIENT_IP=1` for the backend, and keeps Next.js bound to loopback. For an external proxy, use that same arrangement and prevent direct public access to Next.js; never trust a client-supplied forwarding header. The backend accepts the forwarded address only from a loopback peer.
+
+Product image downloads allow only HTTPS on `easy-plu.knowledge-hero.com` port 443, reject non-public DNS addresses, and revalidate each redirect (maximum three followed redirects). They use a separate session without login credentials or environment proxy settings. The 10 MiB limit is enforced during streaming, including responses without Content-Length.

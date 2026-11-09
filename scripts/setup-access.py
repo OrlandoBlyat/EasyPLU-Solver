@@ -10,7 +10,7 @@ key = key_path.read_text().strip()
 if not key:
     raise SystemExit(".api-key is empty; supply a key before continuing")
 
-env_path = root / "front" / ".env.local"
+env_path = root / "frontend" / ".env.local"
 content = env_path.read_text() if env_path.exists() else ""
 lines = content.splitlines()
 lines = [line for line in lines if not line.startswith(("API_INTERNAL_KEY=", "API_ACCESS_USER=", "API_ACCESS_PASSWORD="))]

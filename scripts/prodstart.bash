@@ -19,7 +19,7 @@ for argument in "$@"; do
 done
 source ./scripts/lib/check-dependencies.bash
 
-if [[ ! -s .api-key || ! -f front/.env.local ]]; then
+if [[ ! -s .api-key || ! -f frontend/.env.local ]]; then
   if [[ ! -t 0 ]]; then
     echo "Configure backend access first: python scripts/setup-access.py" >&2
     exit 1
@@ -29,7 +29,7 @@ if [[ ! -s .api-key || ! -f front/.env.local ]]; then
     [yY]|[yY][eE][sS]) "$python_bin" scripts/setup-access.py ;;
     *) echo "Setup skipped. Startup cancelled."; exit 1 ;;
   esac
-  if [[ ! -s .api-key || ! -f front/.env.local ]]; then
+  if [[ ! -s .api-key || ! -f frontend/.env.local ]]; then
     echo "Backend access setup is incomplete." >&2
     exit 1
   fi
@@ -60,8 +60,8 @@ if [[ "$run_mode" == prompt ]]; then
 fi
 
 if [[ "$run_mode" != service ]]; then
-  npm --prefix front run build
-elif [[ ! -s front/.next/BUILD_ID ]]; then
+  npm --prefix frontend run build
+elif [[ ! -s frontend/.next/BUILD_ID ]]; then
   echo "Production build is missing. Run prodstart.bash interactively first." >&2
   exit 1
 fi
@@ -84,11 +84,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-(exec "$python_bin" -m uvicorn back.api:app --host 127.0.0.1 --port "$backend_port" --workers 1) &
+(exec "$python_bin" -m uvicorn backend.app:app --host 127.0.0.1 --port "$backend_port" --workers 1) &
 service_pids+=("$!")
 
 # Execute Next directly so signals reach its process without an npm wrapper.
-(cd front && exec node node_modules/next/dist/bin/next start --hostname "$frontend_host" --port "$frontend_port") &
+(cd frontend && exec node node_modules/next/dist/bin/next start --hostname "$frontend_host" --port "$frontend_port") &
 service_pids+=("$!")
 
 if [[ "$https_mode" != none ]]; then

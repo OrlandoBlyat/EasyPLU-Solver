@@ -3,7 +3,7 @@
 
 select_python() {
   python_bin=""
-  for candidate in .venv/bin/python back/venv/bin/python venv/bin/python; do
+  for candidate in .venv/bin/python backend/venv/bin/python venv/bin/python; do
     if [[ -x "$candidate" ]]; then
       python_bin="$PWD/$candidate"
       break
@@ -55,7 +55,7 @@ PY
   elif ! node -e 'if (Number(process.versions.node.split(".")[0]) < 20) process.exit(1)'; then
     echo "Node.js 20+ is required." >&2
     missing=1
-  elif ! npm --prefix front ls --depth=0 --include=dev >/dev/null 2>&1; then
+  elif ! npm --prefix frontend ls --depth=0 --include=dev >/dev/null 2>&1; then
     echo "Frontend dependencies are missing or do not match package.json." >&2
     missing=1
   fi

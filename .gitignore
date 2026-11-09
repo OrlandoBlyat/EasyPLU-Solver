@@ -36,5 +36,6 @@ mylidl_debug/
 var/*
 !var/plu-catalog/
 var/plu-catalog/*
-!var/plu-catalog/cache.json
 config/https.local.json
+
+.schedule-key

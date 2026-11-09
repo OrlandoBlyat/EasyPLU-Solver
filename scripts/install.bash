@@ -57,13 +57,13 @@ node -e 'if (Number(process.versions.node.split(".")[0]) < 20) { console.error("
 
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r back/requirements.txt
+.venv/bin/python -m pip install -r backend/requirements.txt
 
 if "$install_system" && command -v apt-get >/dev/null; then
   .venv/bin/python -m playwright install-deps chromium
 fi
 .venv/bin/python -m playwright install chromium
-npm --prefix front ci --include=dev
+npm --prefix frontend ci --include=dev
 
 # Check actual browser startup, not just successful downloads.
 .venv/bin/python - <<'PY'

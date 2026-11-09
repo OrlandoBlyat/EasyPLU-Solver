@@ -24,7 +24,7 @@ def unit_text(root, environment):
              "Restart=on-failure", "RestartSec=10", "KillMode=control-group", "TimeoutStopSec=45",
              "UMask=0077", "StandardOutput=journal", "StandardError=journal"]
     for key in ("PATH", "FRONTEND_HOST", "FRONTEND_PORT", "BACKEND_PORT", "API_BASE_URL", "MAX_ACTIVE_JOBS",
-                "MAX_JOB_SECONDS", "JOB_STARTS_PER_MINUTE", "SMS_SUBMISSIONS_PER_MINUTE"):
+                "MAX_JOB_SECONDS", "MAX_QUEUE_SECONDS", "MAX_QUEUED_JOBS", "JOB_STARTS_PER_MINUTE", "SMS_SUBMISSIONS_PER_MINUTE"):
         if key in environment:
             lines.append("Environment=" + quote(f"{key}={environment[key]}"))
     return "\n".join(lines + ["", "[Install]", "WantedBy=default.target", ""])
