@@ -1,5 +1,6 @@
 "use client"
 
+import { useTranslation } from "@/lib/i18n"
 import type React from "react"
 import type { SessionResult } from "@/lib/client/session-types"
 import { SessionResultCard } from "@/components/login/session-result"
@@ -20,6 +21,7 @@ type ApiStatus = "checking" | "online" | "offline" | "error"
 const isEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) && value.trim().length <= 254
 
 export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?: ApiStatus }) {
+  const { t } = useTranslation()
   const [email, setEmail] = useState("")
   const [showUsernameWarning, setShowUsernameWarning] = useState(false)
   const [password, setPassword] = useState("")
@@ -111,7 +113,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       })
 
       if (response.status === 401) {
-        setError("Napačni podatki, preveri geslo ali uporabniško ime!")
+        setError(t("Incorrect credentials. Check your password or username!"))
         setIsRunning(false)
         return
       }
@@ -119,7 +121,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       if (!response.ok) {
         if (response.status === 429) {
           const data = await response.json()
-          throw new Error(data.detail || "Strežnik je zaseden. Poskusite pozneje.")
+          throw new Error(data.detail || t("The server is busy. Please try again later."))
         }
         throw new Error(`HTTP error! status: ${response.status}`)
       }
@@ -154,7 +156,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                 setTestStarted(true)
               }
               if (data.stage === "closed") {
-                throw new Error("Povezava se je zaprla pred zaključkom testa. Poskusite znova.")
+                throw new Error(t("The connection closed before the test finished. Please try again."))
               }
               
               setCurrentStage(data.stage || "")
@@ -186,7 +188,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               }
 
               if (data.stage === "error") {
-                setError(data.message || data.error || "Neznana napaka")
+                setError(data.message || data.error || t("Unknown error"))
                 setIsRunning(false)
                 return
               }
@@ -201,12 +203,12 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           }
         }
       }
-      throw new Error("Povezava se je prekinila pred zaključkom testa. Poskusite znova.")
+      throw new Error(t("The connection was interrupted before the test finished. Please try again."))
     } catch (err: any) {
       if (err.message && err.message.includes("401")) {
-        setError("Napačni podatki, preveri geslo ali uporabniško ime!")
+        setError(t("Incorrect credentials. Check your password or username!"))
       } else {
-        setError(err.message || "Napaka pri povezovanju s strežnikom")
+        setError(err.message || t("Error connecting to the server"))
       }
       setIsRunning(false)
     }
@@ -220,7 +222,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
 
   const handleSsoLogin = async () => {
     if (!/^[0-9]{8}$/.test(email.trim()) || password.length < 8) {
-      setError("Vnesite osemmestno globalno številko in geslo")
+      setError(t("Enter your eight-digit global number and password"))
       return
     }
     await startSession("sso")
@@ -244,9 +246,9 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       }
       setOtp("")
       setCurrentStage((stage) => stage === "otp_required" ? "logging_in" : stage)
-      setCurrentMessage("SMS koda poslana, čakam na prijavo...")
+      setCurrentMessage(t("SMS code sent, waiting to sign in..."))
     } catch (err: any) {
-      setError(err.message || "Napaka pri pošiljanju SMS kode")
+      setError(err.message || t("Error sending the SMS code"))
     } finally {
       setOtpSubmitting(false)
     }
@@ -259,10 +261,10 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   const passwordInvalid = showPasswordWarning && password.length > 0 && password.length < 8
 
   const statusText = apiStatus === "online"
-    ? "API povezan"
+    ? t("API connected")
     : apiStatus === "checking"
-      ? "Preverjanje povezave API"
-      : "API nedostopen"
+      ? t("Checking API connection")
+      : t("API unavailable")
   const StatusIcon = apiStatus === "online" || apiStatus === "checking" ? Wifi : WifiOff
 
   return (
@@ -294,8 +296,8 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
         <CardContent className="space-y-6 px-6 sm:px-8">
           {!showRunPanel && (
           <form onSubmit={handleEasyPLULogin} className="space-y-5">
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1" role="group" aria-label="Način izvajanja">
-              {([ ["knowledge", "Dvig znanja"], ["tasks", "PLU Preverjanje"] ] as const).map(([value, label]) => (
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1" role="group" aria-label={t("Run mode")}>
+              {([ ["knowledge", t("Improve knowledge")], ["tasks", t("PLU checks")] ] as const).map(([value, label]) => (
                 <button key={value} type="button" disabled={isRunning} aria-pressed={mode === value} onClick={() => setMode(value)}
                   className={`min-h-12 rounded-lg px-2 text-sm font-medium transition-colors ${mode === value ? "bg-white text-blue-700 shadow-sm" : "text-slate-500"}`}>
                   {label}
@@ -304,7 +306,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
             </div>
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium px-1">
-                Globalna številka ali e-naslov
+                {t("Global number or email")}
               </Label>
               <Input
                 id="email"
@@ -313,7 +315,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                 autoCapitalize="none"
                 spellCheck={false}
                 disabled={isRunning}
-                placeholder="12345678 ali ime@primer.si"
+                placeholder={t("12345678 or name@example.com")}
                 value={email}
                 onChange={(e) => {
                   setEmail(e.target.value)
@@ -328,7 +330,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               />
               {usernameInvalid && (
                 <p id="username-warning" role="status" className="px-1 text-xs text-amber-700">
-                  Vnesite veljaven e-naslov ali osemmestno globalno številko.
+                  {t("Enter a valid email or eight-digit global number.")}
                 </p>
               )}
             </div>
@@ -346,7 +348,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                 className="h-5 w-5 shrink-0 rounded border-slate-300 accent-blue-600 cursor-pointer"
               />
               <Label htmlFor="customResult" className="flex min-h-14 flex-1 items-center text-sm font-medium cursor-pointer">
-                Rezultat po meri
+                {t("Custom score")}
               </Label>
             </div>}
 
@@ -358,7 +360,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                   inputMode="numeric"
                   pattern="[0-9]{1,2}"
                   maxLength={2}
-                  placeholder="Rezultat"
+                  placeholder={t("Score")}
                   value={targetScore ?? ""}
                   onChange={(e) => {
                     const value = e.target.value
@@ -367,7 +369,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                     }
                   }}
                   className="h-12 rounded-xl border-slate-200 pr-8 text-base"
-                  aria-label="Rezultat po meri v odstotkih"
+                  aria-label={t("Custom score as a percentage")}
                   disabled={isRunning}
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
@@ -375,7 +377,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
             )}
 
             <div className="space-y-3 pt-2">
-              <p className="text-xs font-medium text-slate-500">IZBERITE NAČIN PRIJAVE</p>
+              <p className="text-xs font-medium text-slate-500">{t("CHOOSE A SIGN-IN METHOD")}</p>
               <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
                 <Button type="submit" size="lg" className="h-12 rounded-xl bg-blue-600 font-semibold text-white hover:bg-blue-700 cursor-pointer disabled:bg-slate-200 disabled:text-slate-500 disabled:opacity-100" disabled={isRunning || !isEmailUsername || password.length < 8}>
                   easyPLU <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -395,12 +397,12 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           )}
 
           {isRunning && !showRunPanel && (
-            <p role="status" className="text-center text-sm text-slate-500">{currentStage === "queued" ? currentMessage : "Prijavljanje..."}</p>
+            <p role="status" className="text-center text-sm text-slate-500">{currentStage === "queued" ? currentMessage : t("Signing in...")}</p>
           )}
 
           {isRunning && testStarted && mode === "knowledge" && (
             <p className="text-center text-xs leading-relaxed text-slate-500">
-              Za dosego 100 % znanja se test po potrebi samodejno ponovi.
+              {t("The test repeats automatically as needed to reach 100% knowledge.")}
             </p>
           )}
 
@@ -416,7 +418,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
                 <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path fillRule="evenodd" d="M6 18L18 6M6 6l12 12" clipRule="evenodd" />
                 </svg>
-                <p className="min-w-0 break-words text-sm text-red-700 font-medium">Napaka: {error}</p>
+                <p className="min-w-0 break-words text-sm text-red-700 font-medium">{t("Error:")} {error}</p>
               </div>
             </div>
           )}

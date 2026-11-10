@@ -1,13 +1,15 @@
 "use client"
 
+import { availableLanguages, useTranslation } from "@/lib/i18n"
 import { useState } from "react"
-import { Download, Code2, Wrench, Loader2, CalendarClock } from "lucide-react"
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
+import { Download, Code2, Wrench, Loader2, CalendarClock, Languages } from "lucide-react"
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu"
 import { ScheduleDialog, useSchedules } from "@/components/scheduling/schedule-dialog"
 
 const footerIconClass = "inline-flex h-11 w-11 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-60"
 
 export function FooterTools({ isRunning }: { isRunning: boolean }) {
+  const { t, locale, setLocale } = useTranslation()
   const controller = useSchedules()
   const { scheduleBusy, openSchedule } = controller
   const [isExporting, setIsExporting] = useState(false)
@@ -19,7 +21,7 @@ export function FooterTools({ isRunning }: { isRunning: boolean }) {
       const response = await fetch("/api/backend/catalog-pdf", { cache: "no-store" })
       if (!response.ok) {
         const body = await response.json().catch(() => null)
-        throw new Error(body?.detail || "Prenos PDF ni uspel. Poskusite znova.")
+        throw new Error(body?.detail || t("PDF download failed. Please try again."))
       }
       const url = URL.createObjectURL(await response.blob())
       const link = document.createElement("a")
@@ -30,7 +32,7 @@ export function FooterTools({ isRunning }: { isRunning: boolean }) {
       link.remove()
       setTimeout(() => URL.revokeObjectURL(url), 60000)
     } catch (error) {
-      setExportError(error instanceof Error ? error.message : "Prenos PDF ni uspel.")
+      setExportError(error instanceof Error ? error.message : t("PDF download failed."))
     } finally {
       setIsExporting(false)
     }
@@ -44,7 +46,7 @@ export function FooterTools({ isRunning }: { isRunning: boolean }) {
               href="https://github.com/OrlandoBlyat/EasyPLU-Solver"
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Projekt na GitHubu"
+              aria-label={t("Project on GitHub")}
               title="GitHub"
               className={footerIconClass}
             >
@@ -57,14 +59,14 @@ export function FooterTools({ isRunning }: { isRunning: boolean }) {
               </svg>
             </a>
             <a href="https://github.com/OrlandoBlyat/EasyPLU-Solver" target="_blank" rel="noopener noreferrer"
-              aria-label="Open source" title="Open source" className={footerIconClass}>
+              aria-label={t("Open source")} title={t("Open source")} className={footerIconClass}>
               <Code2 className="h-5 w-5" aria-hidden="true" />
             </a>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button type="button" disabled={isExporting} aria-busy={isExporting}
-                  aria-label={isExporting ? "Pripravljanje PDF..." : "Orodja"}
-                  title={isExporting ? "Pripravljanje PDF..." : "Orodja"}
+                  aria-label={isExporting ? t("Preparing PDF...") : t("Tools")}
+                  title={isExporting ? t("Preparing PDF...") : t("Tools")}
                   className={footerIconClass}>
                   {isExporting ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Wrench className="h-5 w-5" aria-hidden="true" />}
                 </button>
@@ -72,12 +74,28 @@ export function FooterTools({ isRunning }: { isRunning: boolean }) {
               <DropdownMenuContent align="end" side="top">
                 <DropdownMenuItem onSelect={() => void downloadCatalog()} disabled={isRunning || isExporting}>
                   <Download aria-hidden="true" />
-                  Prenesi katalog PLU (PDF)
+                  {t("Download PLU catalog (PDF)")}
                 </DropdownMenuItem>
                 <DropdownMenuItem disabled={scheduleBusy || isRunning} onSelect={() => void openSchedule()}>
                   <CalendarClock aria-hidden="true" />
-                  Samodejni testi
+                  {t("Automatic tests")}
                 </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" aria-label={t("Language")} title={t("Language")} className={footerIconClass}>
+                  <Languages className="h-5 w-5" aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="top">
+                <DropdownMenuRadioGroup value={locale} onValueChange={setLocale}>
+                  {availableLanguages.map(language => (
+                    <DropdownMenuRadioItem key={language.code} value={language.code} lang={language.code}>
+                      {language.name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
             </div>

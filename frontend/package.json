@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "check:translations": "node scripts/check-translations.mjs",
     "build": "next build",
     "dev": "next dev --hostname 0.0.0.0",
     "lint": "next lint",

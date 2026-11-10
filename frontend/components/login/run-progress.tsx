@@ -1,5 +1,6 @@
 "use client"
 
+import { useTranslation } from "@/lib/i18n"
 import type { FormEvent } from "react"
 import { Progress } from "@/components/ui/progress"
 import { Input } from "@/components/ui/input"
@@ -20,23 +21,24 @@ interface RunProgressProps {
 }
 
 export function RunProgress({ mode, taskProgress, currentStage, submittedItems, currentMessage, currentKnowledge, handleSubmitOtp, otp, setOtp, otpSubmitting, runId }: RunProgressProps) {
+  const { t } = useTranslation()
   const getStageLabel = (stage: string): string => {
     const stageLabels: Record<string, string> = {
-      initializing: "Začenjanje",
-      logging_in: "Prijavljanje",
-      checking_tasks: "Preverjanje nalog",
-      assigned_tasks: "PLU Preverjanje",
-      otp_required: "SMS koda",
-      creating_session: "Ustvarjanje seje",
-      starting_execution: "Zaganjanje izvajanja",
-      fetching_items: "Pridobivanje elementov",
-      submitting_answers: "Oddajanje odgovorov",
-      submitting_result: "Oddajanje rezultata",
-      completed: "Končano",
-      error: "Napaka",
-      attempt_start: "Priprava testa",
-      attempt_complete: "Preverjanje znanja",
-      retrying: "Nadaljevanje testa",
+      initializing: t("Initializing"),
+      logging_in: t("Signing in"),
+      checking_tasks: t("Checking tasks"),
+      assigned_tasks: t("PLU checks"),
+      otp_required: t("SMS code"),
+      creating_session: t("Creating session"),
+      starting_execution: t("Starting execution"),
+      fetching_items: t("Fetching items"),
+      submitting_answers: t("Submitting answers"),
+      submitting_result: t("Submitting score"),
+      completed: t("Completed"),
+      error: t("Error"),
+      attempt_start: t("Preparing test"),
+      attempt_complete: t("Checking knowledge"),
+      retrying: t("Continuing test"),
     }
     return stageLabels[stage] || stage
   }
@@ -48,16 +50,16 @@ export function RunProgress({ mode, taskProgress, currentStage, submittedItems, 
                 {mode === "tasks" && taskProgress && (
                   <div className="space-y-2 border-b border-blue-100 pb-4">
                     <div className="flex items-center justify-between gap-3 text-sm font-medium text-slate-700">
-                      <span>PLU Preverjanje</span>
+                      <span>{t("PLU checks")}</span>
                       <span className="tabular-nums">{taskProgress.completed} / {taskProgress.total}</span>
                     </div>
-                    <Progress aria-label="Napredek PLU preverjanj" value={taskProgress.total ? taskProgress.completed / taskProgress.total * 100 : 100} className="h-2 [&>div]:bg-blue-600" />
+                    <Progress aria-label={t("PLU checks progress")} value={taskProgress.total ? taskProgress.completed / taskProgress.total * 100 : 100} className="h-2 [&>div]:bg-blue-600" />
                   </div>
                 )}
                 {/* Stage indicator */}
                 {isSubmittingAnswers ? (
                   <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-medium text-slate-700">Oddajanje odgovorov</span>
+                    <span className="font-medium text-slate-700">{t("Submitting answers")}</span>
                     {submittedItems && (
                       <span className="shrink-0 tabular-nums text-slate-500">
                         {submittedItems.current} / {submittedItems.total}
@@ -77,7 +79,7 @@ export function RunProgress({ mode, taskProgress, currentStage, submittedItems, 
                       <div className="flex items-center justify-center gap-3 mt-2">
                         {currentKnowledge !== null && (
                           <span className="text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 px-2 py-1 rounded">
-                            Znanje: {currentKnowledge.toFixed(2)}%
+                            {t("Knowledge:")} {currentKnowledge.toFixed(2)}%
                           </span>
                         )}
                       </div>
@@ -102,15 +104,15 @@ export function RunProgress({ mode, taskProgress, currentStage, submittedItems, 
                       minLength={6}
                       maxLength={6}
                       autoComplete="one-time-code"
-                      aria-label="SMS koda"
-                      placeholder="SMS koda"
+                      aria-label={t("SMS code")}
+                      placeholder={t("SMS code")}
                       value={otp}
                       onChange={(e) => setOtp(e.target.value)}
                       className="h-12 rounded-xl border-slate-200 bg-slate-50/70 text-base shadow-none focus-visible:border-blue-500 focus-visible:ring-blue-500/20"
                       required
                     />
                     <Button type="submit" className="h-12 w-full rounded-xl bg-blue-600 hover:bg-blue-700" disabled={otpSubmitting || !runId || !/^[0-9]{6}$/.test(otp)}>
-                      {otpSubmitting ? "Pošiljanje..." : "Pošlji SMS kodo"}
+                      {otpSubmitting ? t("Sending...") : t("Send SMS code")}
                     </Button>
                   </form>
                 )}

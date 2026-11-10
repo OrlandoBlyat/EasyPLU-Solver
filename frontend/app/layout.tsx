@@ -4,6 +4,7 @@ import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Space_Grotesk } from "next/font/google"
 import "./globals.css"
+import { TranslationProvider } from "@/lib/i18n"
 import { Suspense } from "react"
 
 const spaceGrotesk = Space_Grotesk({
@@ -13,7 +14,7 @@ const spaceGrotesk = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: "easyPLU solver",
-  description: "Prijava in spremljanje napredka easyPLU.",
+  description: "Sign in and track your easyPLU progress.",
   icons: {
     icon: { url: "/easyplu-icon.png", type: "image/png" },
     apple: "/easyplu-icon.png",
@@ -26,9 +27,9 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="sl">
+    <html lang="en">
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable} ${spaceGrotesk.variable}`}>
-        <Suspense fallback={<div>Loading...</div>}>{children}</Suspense>
+        <TranslationProvider><Suspense>{children}</Suspense></TranslationProvider>
       </body>
     </html>
   )

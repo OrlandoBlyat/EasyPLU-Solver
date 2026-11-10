@@ -1,5 +1,6 @@
 "use client"
 
+import { useTranslation } from "@/lib/i18n"
 import { useEffect, useState } from "react"
 import { ArrowBigUpDash, Eye, EyeOff } from "lucide-react"
 import { Input } from "@/components/ui/input"
@@ -15,6 +16,7 @@ interface PasswordFieldProps {
 }
 
 export function PasswordField({ password, passwordInvalid, disabled, onChange, onFocus, onBlur }: PasswordFieldProps) {
+  const { t } = useTranslation()
   const [showPassword, setShowPassword] = useState(false)
   const [capsLock, setCapsLock] = useState(false)
 
@@ -48,11 +50,11 @@ export function PasswordField({ password, passwordInvalid, disabled, onChange, o
     }
   }, [])
 
-  const visibilityLabel = showPassword ? "Skrij geslo" : "Prikaži geslo"
+  const visibilityLabel = showPassword ? t("Hide password") : t("Show password")
 
   return (
     <div className="space-y-2">
-      <Label htmlFor="password" className="text-sm font-medium px-1">Geslo</Label>
+      <Label htmlFor="password" className="text-sm font-medium px-1">{t("Password")}</Label>
       <div className="relative">
         <Input
           id="password"
@@ -76,16 +78,16 @@ export function PasswordField({ password, passwordInvalid, disabled, onChange, o
           onClick={() => setShowPassword(previous => !previous)}
           disabled={disabled}
           className={`absolute right-0 top-0 flex h-12 w-12 items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-blue-600 transition-colors disabled:opacity-50 ${capsLock ? "text-red-600 hover:text-red-700" : "text-slate-500 hover:text-slate-900"}`}
-          aria-label={capsLock ? `${visibilityLabel}. Caps Lock je vklopljen.` : visibilityLabel}
-          title={capsLock ? "Caps Lock je vklopljen" : visibilityLabel}
+          aria-label={capsLock ? `${visibilityLabel}. ${t("Caps Lock is on.")}` : visibilityLabel}
+          title={capsLock ? t("Caps Lock is on") : visibilityLabel}
           aria-pressed={showPassword}
         >
           {capsLock ? <span className="flex h-7 w-7 items-center justify-center rounded-md bg-red-50 ring-1 ring-red-200"><ArrowBigUpDash className="h-5 w-5" strokeWidth={2.5} aria-hidden="true" /></span> : showPassword ? <EyeOff className="h-5 w-5" aria-hidden="true" /> : <Eye className="h-5 w-5" aria-hidden="true" />}
         </button>
       </div>
-      <span id="caps-lock-warning" role="status" className="sr-only">{capsLock ? "Caps Lock je vklopljen." : ""}</span>
+      <span id="caps-lock-warning" role="status" className="sr-only">{capsLock ? t("Caps Lock is on.") : ""}</span>
       {passwordInvalid && (
-        <p id="password-warning" role="status" className="px-1 text-xs text-amber-700">Geslo mora vsebovati vsaj 8 znakov.</p>
+        <p id="password-warning" role="status" className="px-1 text-xs text-amber-700">{t("Password must contain at least 8 characters.")}</p>
       )}
     </div>
   )
