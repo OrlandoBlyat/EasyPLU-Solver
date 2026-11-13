@@ -7,7 +7,7 @@ if [[ "${configure_https:-false}" == true ]]; then
   https_args+=(--configure)
 fi
 "$python_bin" scripts/setup-https.py "${https_args[@]}" --frontend-port "$frontend_port" --settings "$https_settings_file" --caddyfile "$https_caddyfile" --label "$https_label"
-IFS=$'\t' read -r https_mode https_host https_port < <("$python_bin" scripts/setup-https.py --print --frontend-port "$frontend_port" --settings "$https_settings_file" --caddyfile "$https_caddyfile" --label "$https_label")
+IFS=$'\t' read -r https_mode https_host https_port https_ca_pool < <("$python_bin" scripts/setup-https.py --print --frontend-port "$frontend_port" --settings "$https_settings_file" --caddyfile "$https_caddyfile" --label "$https_label")
 
 if [[ "$https_mode" != none ]]; then
   if ! command -v caddy >/dev/null; then
@@ -18,7 +18,13 @@ if [[ "$https_mode" != none ]]; then
     case "$caddy_answer" in
       y|Y|yes|YES)
         if command -v dnf >/dev/null; then sudo dnf install -y caddy
-        elif command -v apt-get >/dev/null; then sudo apt-get update; sudo apt-get install -y caddy
+        elif command -v apt-get >/dev/null; then
+          sudo apt-get update
+          if ! sudo apt-get install -y caddy; then
+            echo "Caddy is not available from the configured apt repositories." >&2
+            echo "Install it from https://caddyserver.com/docs/install, then rerun startup." >&2
+            exit 1
+          fi
         else echo "Install Caddy from https://caddyserver.com/docs/install" >&2; exit 1
         fi ;;
       *) echo "Caddy installation skipped. Startup cancelled." >&2; exit 1 ;;
@@ -59,7 +65,13 @@ if [[ "$https_mode" != none ]]; then
     echo "$XDG_DATA_HOME/caddy/pki/authorities/local/root.crt"
   elif [[ "$https_mode" == cloudflare ]]; then
     echo "Cloudflare Tunnel origin: https://127.0.0.1:${https_port}"
-    echo "Set cloudflared originServerName to ${https_host}; keep TLS verification enabled and configure its CA pool for the Cloudflare Origin CA."
+    echo "Published application settings:"
+    echo "  Service URL: https://127.0.0.1:${https_port}"
+    echo "  TLS > Origin Server Name: ${https_host}"
+    echo "  TLS > CA Pool: ${https_ca_pool}"
+    echo "  TLS > No TLS Verify: disabled (verification stays enabled)"
+    echo "  Access > Validate JWT: disabled for a publicly accessible site"
+    echo "DNS must be assigned to this Tunnel in Cloudflare, and the zone must be Active."
   else
     echo "Caddy needs permission to bind ports 80/443. If denied, grant its binary CAP_NET_BIND_SERVICE or use an administrator-managed Caddy service."
   fi

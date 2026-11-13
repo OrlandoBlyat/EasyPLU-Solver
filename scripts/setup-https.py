@@ -5,11 +5,15 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = ROOT / "config/https.local.json"
 DEFAULT_CADDYFILE = ROOT / "var/https/Caddyfile"
+DEFAULT_ORIGIN_CERTIFICATE = Path("/etc/easyplu/origin.pem")
+DEFAULT_ORIGIN_KEY = Path("/etc/easyplu/origin-key.pem")
+DEFAULT_ORIGIN_CA_POOL = Path("/etc/cloudflare/origin-ca.pem")
 
 
 def ask(prompt, default):
@@ -18,11 +22,18 @@ def ask(prompt, default):
 
 
 def validate_path(value, name):
-    if not isinstance(value, str) or not re.fullmatch(r"/[A-Za-z0-9._/-]+", value):
-        raise ValueError(f"{name} must be an absolute path containing only letters, numbers, '.', '_', '/', or '-'")
+    if not isinstance(value, str) or not Path(value).is_absolute() or any(char in value for char in "\r\n\x00"):
+        raise ValueError(f"{name} must be an absolute file path")
     path = Path(value)
     if not path.is_file():
-        raise ValueError(f"{name} does not exist or is not a file")
+        if name == "Cloudflare Origin CA pool":
+            raise ValueError(
+                f"{path} does not exist. Install the Cloudflare Origin CA bundle with "
+                f"`sudo bash {ROOT / 'scripts/install-cloudflare-origin-ca.bash'}`"
+            )
+        raise ValueError(f"{name} does not exist or is not a file: {path}")
+    if not os.access(path, os.R_OK):
+        raise ValueError(f"{name} is not readable by the current user: {path}")
     return path
 
 
@@ -52,8 +63,19 @@ def validate(settings):
             raise ValueError("Cloudflare Tunnel mode requires the public hostname covered by its Origin Certificate")
         certificate = validate_path(settings.get("certificate"), "certificate")
         key = validate_path(settings.get("key"), "key")
+        ca_pool = validate_path(settings.get("ca_pool"), "Cloudflare Origin CA pool")
         if certificate == key:
             raise ValueError("certificate and key must be different files")
+        if ca_pool in (certificate, key):
+            raise ValueError("Cloudflare Origin CA pool must be separate from the origin certificate and private key")
+        try:
+            ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(certificate, key)
+        except ssl.SSLError as error:
+            raise ValueError(f"Origin certificate and private key are invalid or do not match: {error}") from error
+        try:
+            ssl.create_default_context(cafile=str(ca_pool))
+        except ssl.SSLError as error:
+            raise ValueError(f"Cloudflare Origin CA pool is not a valid PEM certificate bundle: {error}") from error
     return mode, host, port
 
 
@@ -115,13 +137,22 @@ def main():
             print("Point your domain's A/AAAA records to this server. Forward/open TCP 80 and 443. Caddy will request and renew the certificate when started.", file=sys.stderr)
             settings = {"mode": "letsencrypt", "host": ask("Your domain", "plu.example.com"), "port": 443}
         elif choice == "2":
-            print("Create a Cloudflare Origin Certificate for this hostname. cloudflared must use HTTPS to this loopback listener with TLS verification enabled.", file=sys.stderr)
+            print(
+                "Create a Cloudflare Origin Certificate for this exact public hostname. "
+                "Install both Cloudflare Origin CA roots first with:\n"
+                f"  sudo bash {ROOT / 'scripts/install-cloudflare-origin-ca.bash'}\n"
+                "In the Tunnel's published-application TLS settings, set Origin Server Name "
+                "to this hostname, CA Pool to the printed bundle path, and leave certificate "
+                "verification enabled. Do not enable Access JWT validation for a public app.",
+                file=sys.stderr,
+            )
             settings = {
                 "mode": "cloudflare",
                 "host": ask("Public hostname", "plu.example.com"),
                 "port": int(ask("Loopback HTTPS port", "8443")),
-                "certificate": ask("Absolute certificate path", "/etc/cloudflare/origin.pem"),
-                "key": ask("Absolute private-key path", "/etc/cloudflare/origin-key.pem"),
+                "certificate": ask("Absolute Origin Certificate path", str(DEFAULT_ORIGIN_CERTIFICATE)),
+                "key": ask("Absolute Origin private-key path", str(DEFAULT_ORIGIN_KEY)),
+                "ca_pool": ask("Cloudflare Origin CA bundle path", str(DEFAULT_ORIGIN_CA_POOL)),
             }
         elif choice == "3":
             settings = {"mode": "local", "host": ask("Hostname or LAN IP you will open", "localhost"), "port": int(ask("HTTPS port", "8443"))}
@@ -138,7 +169,7 @@ def main():
     mode, host, port = validate(settings)
     generate(settings, args.frontend_port, caddyfile)
     if args.print_settings:
-        print(f"{mode}\t{host}\t{port}")
+        print(f"{mode}\t{host}\t{port}\t{settings.get('ca_pool', '')}")
 
 
 if __name__ == "__main__":

@@ -58,13 +58,13 @@ fi
 if "$install_system"; then
   if command -v apt-get >/dev/null; then
     run_system apt-get update
-    run_system apt-get install -y python3 python3-venv python3-pip python3-pip-whl python3-setuptools-whl nodejs npm
+    run_system apt-get install -y ca-certificates curl openssl python3 python3-venv python3-pip python3-pip-whl python3-setuptools-whl nodejs npm
     python_venv_package="$(python3 -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}-venv")')"
     run_system apt-get install -y "$python_venv_package"
   elif command -v dnf >/dev/null; then
     # Fedora is not an officially supported Playwright distribution. Chromium
     # pulls in native browser libraries; the browser smoke check below verifies compatibility.
-    run_system dnf install -y python3 python3-pip nodejs npm chromium
+    run_system dnf install -y ca-certificates curl openssl python3 python3-pip nodejs npm chromium
   else
     echo "Unsupported package manager. Install Python 3.10+, Node.js 20+, npm and browser libraries, then use --skip-system." >&2
     exit 1

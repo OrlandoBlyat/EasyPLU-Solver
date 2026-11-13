@@ -10,6 +10,6 @@ ingress:
       originServerName: app.example.com
       # PEM file containing the Cloudflare Origin CA that signed Caddy's
       # Origin Certificate. Do not disable TLS verification.
-      caPool: /absolute/path/to/cloudflare-origin-ca.pem
+      caPool: /etc/cloudflare/origin-ca.pem
       noTLSVerify: false
   - service: http_status:404
