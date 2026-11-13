@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from starlette.requests import Request
 from backend.infrastructure.limits import JobLimiter
-from backend.infrastructure.test_queue import TestQueue
+from backend.infrastructure.test_queue import TestQueue, rate_key
 from backend.api.schemas import SessionRequest
 from backend.tests_runner import service
 
@@ -57,6 +57,41 @@ class QueueTests(unittest.TestCase):
         queue.enqueue("other", "other").cancel()
 
 
+class QueueAbuseTests(unittest.TestCase):
+    def test_fresh_sessions_cannot_fill_queue_from_one_client(self):
+        queue = TestQueue(JobLimiter(), max_waiting=20)
+        for index in range(2):
+            queue.enqueue(f"owner-{index}", "192.0.2.1")
+        with self.assertRaises(HTTPException) as rejected:
+            queue.enqueue("fresh-owner", "192.0.2.1")
+        self.assertEqual(rejected.exception.status_code, 429)
+        self.assertIn("Retry-After", rejected.exception.headers)
+        self.assertEqual(len(queue.waiting), 2)
+        queue.enqueue("other-client", "192.0.2.2")
+        self.assertEqual(len(queue.waiting), 3)
+
+    def test_cancelled_requests_still_consume_admission_budget(self):
+        queue = TestQueue(JobLimiter(), admissions_per_minute=2)
+        with patch("backend.infrastructure.limits.time.monotonic", return_value=100):
+            for index in range(2):
+                queue.enqueue(f"owner-{index}", "client").cancel()
+            with self.assertRaises(HTTPException) as rejected:
+                queue.enqueue("fresh-owner", "client")
+        self.assertEqual(rejected.exception.status_code, 429)
+        self.assertFalse(queue.waiting)
+        self.assertFalse(queue.owners)
+        with patch("backend.infrastructure.limits.time.monotonic", return_value=161):
+            queue.enqueue("after-window", "client").cancel()
+
+    def test_cookie_rotation_does_not_change_proxy_budget(self):
+        request = Request({"type": "http", "headers": [(b"x-edge-client-ip", b"192.0.2.99")], "client": ("127.0.0.1", 1234)})
+        with patch.dict("os.environ", {"TRUST_EDGE_CLIENT_IP": "0"}):
+            self.assertEqual(rate_key(request, "first-owner"), "127.0.0.1")
+            self.assertEqual(rate_key(request, "fresh-owner"), "127.0.0.1")
+        with patch.dict("os.environ", {"TRUST_EDGE_CLIENT_IP": "1"}):
+            self.assertEqual(rate_key(request, "first-owner"), "192.0.2.99")
+
+
 class StreamQueueTests(unittest.IsolatedAsyncioTestCase):
     async def test_notice_and_disconnect_cleanup_without_running_solver(self):
         capacity = JobLimiter(max_active=1)
@@ -69,7 +104,9 @@ class StreamQueueTests(unittest.IsolatedAsyncioTestCase):
             response = await service.run_plu_session_stream(data, request)
             stream = response.body_iterator
             self.assertIn("connected", await anext(stream))
-            self.assertIn('"stage": "queued"', await anext(stream))
+            notice = await anext(stream)
+            self.assertIn('"stage": "queued"', notice)
+            self.assertIn('"message_key": "You are in the queue.', notice)
             solver.assert_not_called()
             await stream.aclose()
         self.assertFalse(queue.has_waiters())

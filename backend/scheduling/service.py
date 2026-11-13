@@ -24,7 +24,7 @@ def verified_test(owner, user_id, email, password, login_method):
 def identity(owner):
     value = _verified.get(owner)
     if not value or value[2] < time.time():
-        raise PermissionError("Najprej uspešno zaključite test z e-pošto in geslom EasyPLU.")
+        raise PermissionError("First complete a test using your EasyPLU email and password.")
     return value
 
 
@@ -46,7 +46,7 @@ def update(owner, enabled, consent=False):
         with connect() as connection:
             if enabled:
                 if consent is not True:
-                    raise PermissionError("Pred shranjevanjem prijave morate sprejeti opozorilo.")
+                    raise PermissionError("Accept the warning before saving credentials.")
                 interval, _ = settings()
                 encrypted = auth
                 connection.execute("INSERT INTO schedules_credentials VALUES (?, ?, ?, 'active') ON CONFLICT(user_id) DO UPDATE SET auth=excluded.auth, next_run=excluded.next_run, state='active'",

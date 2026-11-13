@@ -5,7 +5,7 @@ import type React from "react"
 import type { SessionResult } from "@/lib/client/session-types"
 import { SessionResultCard } from "@/components/login/session-result"
 import debugConfig from "../../../config/debug-config.json"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { FooterTools } from "@/components/layout/footer-tools"
 import { PasswordField } from "@/components/login/password-field"
@@ -34,7 +34,12 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   const [testStarted, setTestStarted] = useState(false)
   const [otpRequested, setOtpRequested] = useState(false)
   const [currentMessage, setCurrentMessage] = useState<string>("")
+  const [currentMessageKey, setCurrentMessageKey] = useState<string | null>(null)
+  const [currentMessageParams, setCurrentMessageParams] = useState<Record<string, string | number>>({})
   const [currentStage, setCurrentStage] = useState<string>("")
+  const [queuedAt, setQueuedAt] = useState<number | null>(null)
+  const [queueSeconds, setQueueSeconds] = useState(0)
+  const runController = useRef<AbortController | null>(null)
   const [submittedItems, setSubmittedItems] = useState<{ current: number; total: number } | null>(null)
   const [currentKnowledge, setCurrentKnowledge] = useState<number | null>(null)
   const [result, setResult] = useState<SessionResult | null>(null)
@@ -44,6 +49,15 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   const [otp, setOtp] = useState("")
   const [runId, setRunId] = useState<string | null>(null)
   const [otpSubmitting, setOtpSubmitting] = useState(false)
+
+  useEffect(() => () => runController.current?.abort(), [])
+  useEffect(() => {
+    if (currentStage !== "queued" || queuedAt === null) return
+    const update = () => setQueueSeconds(Math.floor((Date.now() - queuedAt) / 1000))
+    update()
+    const interval = setInterval(update, 1000)
+    return () => clearInterval(interval)
+  }, [currentStage, queuedAt])
 
   useEffect(() => {
     const isHelena = email.toLowerCase().includes("helena")
@@ -81,6 +95,8 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
   }, [initialApiStatus])
 
   const startSession = async (loginMethod: "easyplu" | "sso") => {
+    const controller = new AbortController()
+    runController.current = controller
     // Capture the request before clearing the visible credential field.
     const body = JSON.stringify({
       email,
@@ -100,6 +116,10 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
     setError(null)
     setCurrentStage("")
     setCurrentMessage("")
+    setCurrentMessageKey(null)
+    setCurrentMessageParams({})
+    setQueuedAt(null)
+    setQueueSeconds(0)
     setSubmittedItems(null)
     setCurrentKnowledge(null)
     setOtp("")
@@ -110,6 +130,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body,
+        signal: controller.signal,
       })
 
       if (response.status === 401) {
@@ -136,6 +157,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
 
       while (true) {
         const { done, value } = await reader.read()
+        if (controller.signal.aborted) return
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
@@ -161,6 +183,10 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               
               setCurrentStage(data.stage || "")
               setCurrentMessage(data.message || "")
+              setCurrentMessageKey(data.message_key || null)
+              setCurrentMessageParams(data.message_params || {})
+              if (data.stage === "queued") setQueuedAt(previous => previous ?? Date.now())
+              else setQueuedAt(null)
 
               if (data.user_knowledge !== undefined && data.user_knowledge !== null) {
                 setCurrentKnowledge(data.user_knowledge)
@@ -188,7 +214,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
               }
 
               if (data.stage === "error") {
-                setError(data.message || data.error || t("Unknown error"))
+                setError(data.message_key ? t(data.message_key, data.message_params) : data.message || data.error || t("Unknown error"))
                 setIsRunning(false)
                 return
               }
@@ -205,13 +231,26 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       }
       throw new Error(t("The connection was interrupted before the test finished. Please try again."))
     } catch (err: any) {
+      if (controller.signal.aborted) return
       if (err.message && err.message.includes("401")) {
         setError(t("Incorrect credentials. Check your password or username!"))
       } else {
         setError(err.message || t("Error connecting to the server"))
       }
       setIsRunning(false)
+    } finally {
+      if (runController.current === controller) runController.current = null
     }
+  }
+
+  const cancelQueuedRun = () => {
+    runController.current?.abort()
+    runController.current = null
+    setIsRunning(false)
+    setCurrentStage("")
+    setQueuedAt(null)
+    setCurrentMessage("")
+    setCurrentMessageKey(null)
   }
 
   const handleEasyPLULogin = async (e: React.FormEvent) => {
@@ -247,6 +286,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       setOtp("")
       setCurrentStage((stage) => stage === "otp_required" ? "logging_in" : stage)
       setCurrentMessage(t("SMS code sent, waiting to sign in..."))
+      setCurrentMessageKey(null)
     } catch (err: any) {
       setError(err.message || t("Error sending the SMS code"))
     } finally {
@@ -266,6 +306,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
       ? t("Checking API connection")
       : t("API unavailable")
   const StatusIcon = apiStatus === "online" || apiStatus === "checking" ? Wifi : WifiOff
+  const displayedMessage = currentMessageKey ? t(currentMessageKey, currentMessageParams) : currentMessage
 
   return (
     <>
@@ -397,7 +438,13 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           )}
 
           {isRunning && !showRunPanel && (
-            <p role="status" className="text-center text-sm text-slate-500">{currentStage === "queued" ? currentMessage : t("Signing in...")}</p>
+            <div className="space-y-2 text-center">
+              <p role="status" className="text-sm text-slate-500">{currentStage === "queued" ? displayedMessage : t("Signing in...")}</p>
+              {currentStage === "queued" && <>
+                <p className="text-xs tabular-nums text-slate-500">{t("Waiting: {time}", { time: `${Math.floor(queueSeconds / 60)}:${String(queueSeconds % 60).padStart(2, "0")}` })}</p>
+                <Button type="button" variant="outline" onClick={cancelQueuedRun}>{t("Cancel request")}</Button>
+              </>}
+            </div>
           )}
 
           {isRunning && testStarted && mode === "knowledge" && (
@@ -407,7 +454,7 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
           )}
 
           {showRunPanel && <RunProgress mode={mode} taskProgress={taskProgress} currentStage={currentStage}
-            submittedItems={submittedItems} currentMessage={currentMessage} currentKnowledge={currentKnowledge}
+            submittedItems={submittedItems} currentMessage={displayedMessage} currentKnowledge={currentKnowledge}
             handleSubmitOtp={handleSubmitOtp} otp={otp} setOtp={setOtp} otpSubmitting={otpSubmitting} runId={runId} />}
 
           {result && <SessionResultCard result={result} onDismiss={() => setResult(null)} />}

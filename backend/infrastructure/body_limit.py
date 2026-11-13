@@ -15,9 +15,9 @@ class BodyLimitMiddleware:
             await JSONResponse({"detail": message}, status_code=status)(scope, receive, send)
         length = headers.get(b"content-length")
         if length is not None and (not length.isdigit() or int(length) > self.max_bytes):
-            return await reject(413, "Zahteva je prevelika.")
+            return await reject(413, "Request body is too large.")
         if headers.get(b"content-type", b"").split(b";")[0].strip().lower() != b"application/json":
-            return await reject(415, "Zahteva mora biti JSON.")
+            return await reject(415, "Request must be JSON.")
         body = bytearray()
         try:
             deadline = asyncio.get_running_loop().time() + 10
@@ -27,11 +27,11 @@ class BodyLimitMiddleware:
                     return
                 body.extend(message.get("body", b""))
                 if len(body) > self.max_bytes:
-                    return await reject(413, "Zahteva je prevelika.")
+                    return await reject(413, "Request body is too large.")
                 if not message.get("more_body", False):
                     break
         except asyncio.TimeoutError:
-            return await reject(408, "Čas pošiljanja je potekel.")
+            return await reject(408, "Request body timed out.")
         delivered = False
         async def replay():
             nonlocal delivered

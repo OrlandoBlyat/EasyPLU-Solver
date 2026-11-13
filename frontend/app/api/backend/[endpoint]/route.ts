@@ -16,7 +16,7 @@ async function proxy(request: Request, context: { params: Promise<{ endpoint: st
     const needsSession = request.method === "POST" || endpoint === "schedule"
     const session = needsSession ? browserSession(request) : null
     if (needsSession && !session) {
-      return Response.json({ detail: "Prijavna seja ni veljavna." }, { status: 403 })
+      return Response.json({ detail: "Login session is invalid." }, { status: 403 })
     }
     const upstream = await fetch(`${process.env.API_BASE_URL || "http://127.0.0.1:8000"}/${endpoint}`, {
       method: request.method,
@@ -39,7 +39,7 @@ async function proxy(request: Request, context: { params: Promise<{ endpoint: st
     })
   } catch (error) {
     if (error instanceof InvalidBody) return Response.json({ detail: error.message }, { status: error.status })
-    return Response.json({ detail: "API ni dosegljiv" }, { status: 502 })
+    return Response.json({ detail: "Backend API is unavailable." }, { status: 502 })
   }
 }
 

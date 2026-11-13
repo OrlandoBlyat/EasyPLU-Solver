@@ -1,6 +1,6 @@
 # Community translations
 
-English (`en.json`) is the source language and the default for new visitors. Change language using the **Language** button beside the footer buttons; the
+English (`en.json`) is the source language and the fallback. New visitors start in their browser's preferred supported language, or English if none matches. Change language using the **Language** button beside the footer buttons; the
 selection is saved in this browser. All interface copy, including accessible
 labels and scheduling consent, lives in these JSON catalogs.
 
@@ -18,6 +18,4 @@ back to English. Use valid JSON (double quotes, no comments or trailing commas).
 Use the same placeholders as the English entry. Have a fluent speaker review
 translations, especially credential storage consent.
 
-Names of products and people stay unchanged. Messages returned directly by the
-backend or upstream EasyPLU service and the downloaded PDF retain their original
-language; these catalogs cover the site's interface.
+Names of products and people stay unchanged. The backend API and frontend API proxy return English messages and do not load these files. The frontend translates progress message keys for display. The downloaded PDF retains its original language.

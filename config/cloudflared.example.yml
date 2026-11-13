@@ -1,0 +1,15 @@
+# Copy outside the checkout or to an ignored config/cloudflared.local.yml.
+# Keep tunnel credentials and certificate material private.
+tunnel: <TUNNEL_UUID>
+credentials-file: /absolute/path/to/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: app.example.com
+    service: https://127.0.0.1:8443
+    originRequest:
+      originServerName: app.example.com
+      # PEM file containing the Cloudflare Origin CA that signed Caddy's
+      # Origin Certificate. Do not disable TLS verification.
+      caPool: /absolute/path/to/cloudflare-origin-ca.pem
+      noTLSVerify: false
+  - service: http_status:404

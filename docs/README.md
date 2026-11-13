@@ -8,7 +8,7 @@ Automate EasyPLU training sessions with a mobile-friendly interface and live pro
 
 - **Two login options:** EasyPLU credentials or Lidl SSO with SMS verification.
 - **Automatic sessions:** submit answers and repeat until 100% knowledge or the 50-attempt limit.
-- **Two modes:** raise knowledge with **Dvig znanja**, or complete assigned **PLU Preverjanje** tasks with overall progress. Scheduled runs complete assignments before a regular test.
+- **Two modes:** raise knowledge with **Improve knowledge**, or complete assigned **PLU checks** with overall progress. Scheduled runs complete assignments before a regular test.
 - **Custom score:** optionally choose a target result.
 - **Live results:** score, knowledge, points, store ranking, and execution time.
 
@@ -16,7 +16,7 @@ Built with Next.js, TypeScript, Tailwind CSS, FastAPI, Playwright, and AES decry
 
 ## Quick start
 
-Linux installer supports Debian/Ubuntu and Fedora. It installs system prerequisites with your approval, creates `.venv`, installs Python/frontend packages and Playwright Chromium, verifies browser startup, and configures API access. Requires Python 3.10+ and Node.js 20+ (older distribution packages must be upgraded). Use `bash scripts/install.bash --skip-system` if system dependencies are already installed.
+Linux installer supports Debian/Ubuntu and Fedora. It installs system prerequisites with your approval, creates `.venv`, installs Python/frontend packages and Playwright Chromium, verifies browser startup, and configures API access. Requires Python 3.10+ and Node.js 20+ (older distribution packages must be upgraded). Use `bash scripts/install.bash --no-sudo` when the package manager can install packages directly without sudo; it runs the same package commands without the sudo prefix.
 
 ```bash
 git clone https://github.com/OrlandoBlyat/EasyPLU-Solver.git
@@ -27,7 +27,7 @@ source .venv/bin/activate
 bash scripts/devstart.bash
 ```
 
-Open **http://localhost:3000** on the host. Other devices on the same LAN can use **http://HOST_LAN_IP:3000**; `devstart.bash` prints available network URLs. Both the script and `npm --prefix frontend run dev` bind to `0.0.0.0`. Development hot reload allows the host’s network addresses automatically; use `DEV_ALLOWED_ORIGINS` (comma-separated hostnames) for additional local DNS names. Allow inbound TCP port 3000 in the host firewall if needed. The backend remains private on localhost; browsers use the frontend proxy. Enter your EasyPLU/MyLidl credentials, choose **easyPLU** or **Lidl SSO**, and enter the SMS code when prompted.
+Open **http://localhost:3000** on the host. Other devices on the same LAN can use **http://HOST_LAN_IP:3000**; `devstart.bash` prints available network URLs. The queued run shows elapsed wait time and can be cancelled before it starts. Interface and streamed progress messages follow the selected language. Both the script and `npm --prefix frontend run dev` bind to `0.0.0.0`. Development hot reload allows the host’s network addresses automatically; use `DEV_ALLOWED_ORIGINS` (comma-separated hostnames) for additional local DNS names. Allow inbound TCP port 3000 in the host firewall if needed. The backend remains private on localhost; browsers use the frontend proxy. Enter your EasyPLU/MyLidl credentials, choose **easyPLU** or **Lidl SSO**, and enter the SMS code when prompted.
 
 The app is open; FastAPI requires a private key added by the frontend server. Keep `.api-key` and `frontend/.env.local` private and port 8000 bound to localhost. Missing key configuration blocks backend requests. The public proxy exposes only health, SMS submission, and session streaming; these remain publicly callable. Use HTTPS for network access.
 
@@ -40,13 +40,18 @@ Runs use server-generated IDs. SMS submission requires the matching signed HttpO
 
 Both startup scripts check Python packages, Node/frontend dependencies, and Chromium before starting. Missing dependencies trigger an installer prompt; they automatically use the project virtual environment when present.
 
-**Production:** run `bash scripts/prodstart.bash`. First startup asks for **Let's Encrypt**, **local HTTPS**, or an explicit **no-certificate/HTTP** exception. It saves the choice in ignored `config/https.local.json`. Change it with `bash scripts/prodstart.bash --configure-https`. Development stays HTTP and never requires certificates.
+**Production:** run `bash scripts/prodstart.bash`. First startup asks for **Let's Encrypt**, **Cloudflare Tunnel HTTPS**, **local HTTPS**, or an explicit **no-certificate/HTTP** exception. It saves the choice in ignored `config/https.local.json`. Change it with `bash scripts/prodstart.bash --configure-https`.
 
 - **Let's Encrypt:** enter a domain you control, point its A/AAAA records at the server, and open/forward TCP 80 and 443. Caddy obtains and renews the certificate while running. The script offers to install Caddy and grant low-port binding permission. Stop any conflicting web server first; do not run the whole app as root.
+- **Cloudflare Tunnel:** create a Cloudflare Origin Certificate for the public hostname and supply its absolute certificate and key paths. Caddy listens only on `127.0.0.1` (default port `8443`) and presents that certificate to `cloudflared`. Configure the Tunnel route with `https://127.0.0.1:8443`, set **Origin Server Name** to the public hostname, configure a CA pool for the Cloudflare Origin CA, and leave certificate verification enabled. Cloudflare handles visitor HTTPS at the edge; its Tunnel connection is separately encrypted. Do not set **Disable TLS certificate verification** or use Flexible SSL.
 - **Local HTTPS:** enter the hostname or LAN IP you will use (default port 8443). Caddy creates a local CA; trust `var/caddy-data/caddy/pki/authorities/local/root.crt` on each device to remove browser warnings. Only distribute that public certificate, never CA/private keys. Local mode does not require public DNS or internet port forwarding.
 - **No certificate:** HTTP only; credentials are unencrypted unless you supply your own HTTPS proxy. Defaults to loopback. This is an explicit exception to HTTPS, not a secure public deployment.
 
-Caddy forwards HTTPS to Next.js over loopback; FastAPI also stays on loopback. Both HTTPS modes preserve streaming progress and use secure owner cookies. Caddy state and certificates live in ignored `var/`; retain them across restarts for renewals. Optional settings: `FRONTEND_HOST` (HTTP mode only), `FRONTEND_PORT`, `BACKEND_PORT`, and `API_BASE_URL`.
+Caddy forwards HTTPS to Next.js over loopback; FastAPI also stays on loopback. All HTTPS modes preserve streaming progress and use secure owner cookies. Caddy state and certificates live in ignored `var/`; retain them across restarts for renewals. Optional settings: `FRONTEND_HOST` (HTTP mode only), `FRONTEND_PORT`, `BACKEND_PORT`, and `API_BASE_URL`.
+
+For a locally managed Tunnel, adapt [`config/cloudflared.example.yml`](../config/cloudflared.example.yml), keep the credentials and CA pool outside the checkout, then validate it with `cloudflared tunnel ingress validate`. Remotely managed Tunnels use the same service URL and origin settings in the Cloudflare dashboard.
+
+**Development HTTPS:** run `bash scripts/devstart.bash --https`. Its first run offers the same certificate choices and saves them separately in ignored `config/dev-https.local.json`; use `--configure-https` to change the choice. The Cloudflare Tunnel option has the same loopback-only HTTPS origin and certificate-validation requirements as production. Run plain `bash scripts/devstart.bash` only for local HTTP development.
 
 **Linux background/startup:** choose a run mode in production startup, or pass `--background` / `--startup`. Both use a user systemd service; startup mode asks to enable lingering so it runs at boot before login. Setup/build happens interactively first. Service restarts reuse the build. Stop with `systemctl --user stop easyplu-solver`; view logs with `journalctl --user -u easyplu-solver -f`; remove autostart with `systemctl --user disable easyplu-solver`. Requires systemd and an available user session bus. Keep the checkout and Python environment in place.
 
@@ -58,11 +63,11 @@ Caddy forwards HTTPS to Next.js over loopback; FastAPI also stays on loopback. B
 
 To use a different backend, set `API_BASE_URL` in `frontend/.env.local` and restart the frontend.
 
-Limits: **2 active jobs**, **3 starts/minute/IP**, **10 SMS submissions/minute/IP**, and **10 minutes/job**. Backend settings: `MAX_ACTIVE_JOBS`, `JOB_STARTS_PER_MINUTE`, `SMS_SUBMISSIONS_PER_MINUTE`, and `MAX_JOB_SECONDS`. Deadline cancellation takes effect after in-flight operations return; slots remain occupied until cleanup.
+Limits: **2 active jobs**, **3 admissions/minute/IP and 3 starts/minute/IP**, **2 pending requests/IP**, **10 SMS submissions/minute/IP**, and **10 minutes/job**. Backend settings: `MAX_ACTIVE_JOBS`, `JOB_STARTS_PER_MINUTE`, `SMS_SUBMISSIONS_PER_MINUTE`, and `MAX_JOB_SECONDS`. Deadline cancellation takes effect after in-flight operations return; slots remain occupied until cleanup.
 
 Run **one backend worker**. A local process lock rejects a second worker against the same checkout (Linux/macOS); multiple replicas require shared storage. Local proxied clients share one IP bucket. Separate device buckets require a trusted proxy that overwrites a client-IP header: set frontend `EDGE_CLIENT_IP_HEADER` and backend `TRUST_EDGE_CLIENT_IP=1`. Keep trust disabled without that proxy.
 
-PLU numbers are decrypted from execution items and kept in memory for each test. SSO saves browser state in `var/auth/mylidl_session.json` only when development debugging and `session_state` are enabled (owner-only permissions); debug artifacts go into `var/debug/`. Keep session files and debug captures private.
+PLU numbers are decrypted from execution items and kept in memory for each test. SSO saves browser state in `var/auth/mylidl_session.json` only when development debugging and `session_state` are explicitly enabled (off by default, owner-only permissions); debug artifacts go into `var/debug/`. Keep session files and debug captures private. Disabling session saving does not delete previously saved files.
 
 **Debugging:** edit `config/debug-config.json`. `enabled` is the master switch; individual switches control solver/SSO logs, browser events, screenshots, session state, tracebacks, and frontend console output. Restart both servers after changing it. Backend debugging requires `APP_ENV=development` (set by `scripts/devstart.bash`); it is off by default and always off with `NODE_ENV=production`. Frontend debugging runs only in Next.js development mode. Development logs are unredacted; client errors stay generic. Framework access logs are separate.
 
@@ -82,7 +87,7 @@ Set `interval_seconds` in `config/scheduled-tests.json` (default: one hour after
 
 ## Self-service automatic tests
 
-After a successful **direct EasyPLU email/password test**, open **Orodja → Samodejni testi** within one minute of finishing the test. Read the warning and check the agreement box, then choose **Shrani prijavo in omogoči teste** to save encrypted EasyPLU credentials, or **Odstrani me iz samodejnih testov** to delete the enrollment. Lidl SSO enrollment is disabled; no SSO credentials, tokens, or cookies are retained by this scheduler. Existing token-based enrollments are removed when the backend starts; enroll again using direct EasyPLU login.
+After a successful **direct EasyPLU email/password test**, open **Tools → Automatic tests** within one minute of finishing the test. Read the warning and check the agreement box, then choose **Save credentials and enable tests** to save encrypted EasyPLU credentials, or **Disable automatic tests** to delete the enrollment. Lidl SSO enrollment is disabled; no SSO credentials, tokens, or cookies are retained by this scheduler. Existing token-based enrollments are removed when the backend starts; enroll again using direct EasyPLU login.
 
 The backend runs opted-in knowledge tests while it is running, using the interval and account delay from `config/scheduled-tests.json` (one hour and 25 seconds by default). Each run performs a fresh EasyPLU login and checks that its account ID matches the enrolled account before starting the test. Errors pause scheduling until another successful interactive test and re-enrollment. No separate scheduler command is needed. After a restart or one minute, complete another direct EasyPLU test to manage your account's schedule in that browser.
 
@@ -92,7 +97,7 @@ Removal deletes the encrypted database entry and requests cancellation of any ru
 
 ## PLU training handbook
 
-The web interface’s **Prenesi katalog PLU (PDF)** button downloads the categorized handbook from the current cache, without a CLI login. Every top-level test refreshes the catalog using its authenticated session before running, including PLU checking mode. A failed refresh leaves the previous cache available and allows the test to continue. Backend dependencies include the PDF libraries. Repeat downloads reuse the latest PDF in server memory until product data changes or the backend restarts. PDF-ready images are cached on disk, avoiding repeated resizing and compression. PDF rendering uses a separate lock so catalogue updates can continue during exports.
+The web interface’s **Download PLU catalog (PDF)** button downloads the categorized handbook from the current cache, without a CLI login. Every top-level test refreshes the catalog using its authenticated session before running, including PLU checking mode. A failed refresh leaves the previous cache available and allows the test to continue. Backend dependencies include the PDF libraries. Repeat downloads reuse the latest PDF in server memory until product data changes or the backend restarts. PDF-ready images are cached on disk, avoiding repeated resizing and compression. PDF rendering uses a separate lock so catalogue updates can continue during exports.
 
 The catalogue tool fetches PLU numbers, product names and images, groups them by category, and creates an A4 PDF. Names prefer the Slovenian translation and fall back to the German (`DE`) entry when Slovenian is unavailable. Every page shows its category in the top-left. Its generator in `backend/catalog/` is shared by the web interface and optional CLI.
 

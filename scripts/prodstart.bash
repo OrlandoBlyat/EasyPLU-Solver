@@ -92,7 +92,7 @@ service_pids+=("$!")
 service_pids+=("$!")
 
 if [[ "$https_mode" != none ]]; then
-  (exec caddy run --config "$PWD/var/https/Caddyfile" --adapter caddyfile) &
+  (exec caddy run --config "$https_caddyfile" --adapter caddyfile) &
   service_pids+=("$!")
 else
   echo "Production frontend: http://${frontend_host}:${frontend_port}"

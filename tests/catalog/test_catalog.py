@@ -77,7 +77,7 @@ class CatalogTests(unittest.TestCase):
     def test_empty_catalog_requires_test(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(catalog, "CACHE", Path(directory) / "missing.json"):
-                with self.assertRaisesRegex(ValueError, "Najprej"):
+                with self.assertRaisesRegex(ValueError, "Run a test first"):
                     catalog.export_catalog()
 
 

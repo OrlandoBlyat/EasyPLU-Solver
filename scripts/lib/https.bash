@@ -1,10 +1,13 @@
-# Sourced by prodstart.bash with repository root as the working directory.
+# Sourced by a startup script with repository root as the working directory.
+https_settings_file="${HTTPS_SETTINGS_FILE:-config/https.local.json}"
+https_caddyfile="${HTTPS_CADDYFILE:-var/https/Caddyfile}"
+https_label="${HTTPS_LABEL:-Production}"
 https_args=()
 if [[ "${configure_https:-false}" == true ]]; then
   https_args+=(--configure)
 fi
-"$python_bin" scripts/setup-https.py "${https_args[@]}" --frontend-port "$frontend_port"
-IFS=$'\t' read -r https_mode https_host https_port < <("$python_bin" scripts/setup-https.py --print --frontend-port "$frontend_port")
+"$python_bin" scripts/setup-https.py "${https_args[@]}" --frontend-port "$frontend_port" --settings "$https_settings_file" --caddyfile "$https_caddyfile" --label "$https_label"
+IFS=$'\t' read -r https_mode https_host https_port < <("$python_bin" scripts/setup-https.py --print --frontend-port "$frontend_port" --settings "$https_settings_file" --caddyfile "$https_caddyfile" --label "$https_label")
 
 if [[ "$https_mode" != none ]]; then
   if ! command -v caddy >/dev/null; then
@@ -45,7 +48,7 @@ if [[ "$https_mode" != none ]]; then
       esac
     fi
   fi
-  caddy validate --config "$PWD/var/https/Caddyfile" --adapter caddyfile
+  caddy validate --config "$https_caddyfile" --adapter caddyfile
   frontend_host=127.0.0.1
   export EDGE_CLIENT_IP_HEADER=x-real-ip
   export TRUST_EDGE_CLIENT_IP=1
@@ -54,6 +57,9 @@ if [[ "$https_mode" != none ]]; then
   if [[ "$https_mode" == local ]]; then
     echo "Trust this public CA certificate on each device after startup:"
     echo "$XDG_DATA_HOME/caddy/pki/authorities/local/root.crt"
+  elif [[ "$https_mode" == cloudflare ]]; then
+    echo "Cloudflare Tunnel origin: https://127.0.0.1:${https_port}"
+    echo "Set cloudflared originServerName to ${https_host}; keep TLS verification enabled and configure its CA pool for the Cloudflare Origin CA."
   else
     echo "Caddy needs permission to bind ports 80/443. If denied, grant its binary CAP_NET_BIND_SERVICE or use an administrator-managed Caddy service."
   fi

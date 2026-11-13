@@ -6,6 +6,7 @@ import { Space_Grotesk } from "next/font/google"
 import "./globals.css"
 import { TranslationProvider } from "@/lib/i18n"
 import { Suspense } from "react"
+import { cookies } from "next/headers"
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -21,15 +22,18 @@ export const metadata: Metadata = {
   },
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const localeCookie = (await cookies()).get("easyplu-language")?.value
+  const hasLocaleCookie = localeCookie === "en" || localeCookie === "sl"
+  const initialLocale = hasLocaleCookie ? localeCookie : "en"
   return (
-    <html lang="en">
+    <html lang={initialLocale}>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable} ${spaceGrotesk.variable}`}>
-        <TranslationProvider><Suspense>{children}</Suspense></TranslationProvider>
+        <TranslationProvider initialLocale={initialLocale} hasLocaleCookie={hasLocaleCookie}><Suspense>{children}</Suspense></TranslationProvider>
       </body>
     </html>
   )

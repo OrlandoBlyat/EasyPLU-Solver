@@ -39,6 +39,6 @@ export async function POST(request: Request) {
     })
   } catch (error) {
     if (error instanceof InvalidBody) return Response.json({ detail: error.message }, { status: error.status })
-    return Response.json({ detail: "API ni dosegljiv" }, { status: 502 })
+    return Response.json({ detail: "Backend API is unavailable." }, { status: 502 })
   }
 }

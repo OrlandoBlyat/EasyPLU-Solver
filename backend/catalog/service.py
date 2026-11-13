@@ -32,7 +32,7 @@ def export_catalog():
     with _lock:
         products = sorted(load_cache(CACHE).values(), key=lambda product: product.product_id)
     if not products:
-        raise ValueError("Katalog je prazen. Najprej zaženite test.")
+        raise ValueError("The catalog is empty. Run a test first.")
     fingerprint = hashlib.sha256(json.dumps(
         [asdict(product) for product in products], sort_keys=True, ensure_ascii=False,
     ).encode()).hexdigest()

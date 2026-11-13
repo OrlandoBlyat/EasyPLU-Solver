@@ -27,19 +27,35 @@ const LanguageContext = createContext({
   t: (key: string, values?: Record<string, string | number>) => key,
 })
 
-export function TranslationProvider({ children }: { children: ReactNode }) {
-  const [locale, updateLocale] = useState("en")
+export function TranslationProvider({ children, initialLocale, hasLocaleCookie }: {
+  children: ReactNode
+  initialLocale: string
+  hasLocaleCookie: boolean
+}) {
+  const [locale, updateLocale] = useState(() => languages[initialLocale] ? initialLocale : "en")
   useEffect(() => {
+    if (hasLocaleCookie) return
     try {
       const saved = localStorage.getItem("easyplu-language")
-      if (saved && languages[saved]) updateLocale(saved)
+      if (saved && languages[saved]) {
+        updateLocale(saved)
+        document.cookie = `easyplu-language=${encodeURIComponent(saved)}; Path=/; Max-Age=31536000; SameSite=Lax`
+      } else if (!saved) {
+        const preferred = navigator.languages.find(language => languages[language] || languages[language.split("-")[0]])
+        if (preferred) {
+          const preferredLocale = languages[preferred] ? preferred : preferred.split("-")[0]
+          updateLocale(preferredLocale)
+          document.cookie = `easyplu-language=${encodeURIComponent(preferredLocale)}; Path=/; Max-Age=31536000; SameSite=Lax`
+        }
+      }
     } catch { /* Storage may be unavailable in private browsers. */ }
-  }, [])
+  }, [hasLocaleCookie])
   useEffect(() => { document.documentElement.lang = locale }, [locale])
   const setLocale = (code: string) => {
     if (!languages[code]) return
     updateLocale(code)
     try { localStorage.setItem("easyplu-language", code) } catch { /* Keep the selection for this session. */ }
+    document.cookie = `easyplu-language=${encodeURIComponent(code)}; Path=/; Max-Age=31536000; SameSite=Lax`
   }
   const t = (key: string, values?: Record<string, string | number>) => {
     const message = languages[locale]?.messages[key] || defaultMessages[key] || key

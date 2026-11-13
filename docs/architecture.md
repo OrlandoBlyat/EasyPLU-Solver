@@ -10,13 +10,13 @@ Authentication in `backend/auth/` supplies a job-local upstream session. The tes
 
 `backend/scheduling/service.py` authorizes enrollment from a recent successful direct EasyPLU test and requires consent. The repository owns SQLite, credentials owns encryption and key migration, state owns short-lived grants and cancellation events, and the worker owns automatic runs. The application lifespan starts and stops the worker. No SSO credentials are enrolled.
 
-Interactive requests enter a bounded FIFO queue before launching a worker. Waiting clients receive a `queued` progress event, and disconnects remove their reservations. Execution deadlines begin after admission. Scheduled jobs defer while interactive requests wait. Defaults are two active tests, twenty waiting requests, and a one-hour queue timeout; configure `MAX_ACTIVE_JOBS`, `MAX_QUEUED_JOBS`, and `MAX_QUEUE_SECONDS`. Each browser can have one active or queued request. Without a trusted edge client address, start-rate accounting uses the signed browser identity rather than the shared loopback proxy address. Queue state is in memory and is cleared on backend restart.
+Interactive requests enter a bounded FIFO queue before launching a worker. Waiting clients receive a `queued` progress event, and disconnects remove their reservations. Execution deadlines begin after admission. Scheduled jobs defer while interactive requests wait. Defaults are two active tests, twenty waiting requests, and a one-hour queue timeout; configure `MAX_ACTIVE_JOBS`, `MAX_QUEUED_JOBS`, and `MAX_QUEUE_SECONDS`. Each browser can have one active or queued request. Admission is rate limited before reserving queue space using `JOB_STARTS_PER_MINUTE`, with at most two pending requests per client address. Cancelling a request does not refund its admission budget. Without a trusted edge client address, clients conservatively share the loopback proxy address budget; rotating browser cookies does not reset it. Queue state is in memory and is cleared on backend restart.
 
 Cross-cutting limits, bounded requests, cancellation, error translation, logging, and single-worker enforcement live in `backend/infrastructure/`.
 
 ## Frontend responsibilities
 
-The login feature coordinates login requests and streamed test state. Password input, run progress/OTP, and results have their own components. Footer tools own PDF download state and invoke the independent scheduling controller and modal. Helpers under `lib/server/` belong only in server routes; client-facing data types live under `lib/client/`.
+The login feature coordinates login requests and streamed test state. Password input, run progress/OTP, and results have their own components. Footer tools own PDF download state and invoke the independent scheduling controller and modal. Helpers under `lib/server/` belong only in server routes; client-facing data types live under `lib/client/`. API responses stay in English. The frontend translates English progress message keys through `frontend/locales/*.json` for display.
 
 ## Commands and persistence
 

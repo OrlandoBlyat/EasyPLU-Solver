@@ -175,16 +175,16 @@ def fetch_assigned_tasks():
 
 
 def complete_assigned_tasks(run_task, emit_progress):
-    emit_progress("checking_tasks", 0, "Preverjanje dodeljenih nalog...")
+    emit_progress("checking_tasks", 0, "Checking assigned tasks...")
     pending = fetch_assigned_tasks()
     completed = 0
-    emit_progress("assigned_tasks", 0, "PLU Preverjanje", {"tasks_completed": 0, "tasks_total": sum(pending.values())})
+    emit_progress("assigned_tasks", 0, "PLU checks", {"tasks_completed": 0, "tasks_total": sum(pending.values())})
     while pending:
         check_cancelled()
         if completed >= 50:
             raise AssignedTaskError("Assignment session limit reached")
         assignment_id, previous = next(iter(pending.items()))
-        emit_progress("assigned_tasks", 0, "PLU Preverjanje", {"tasks_completed": completed, "tasks_total": completed + sum(pending.values())})
+        emit_progress("assigned_tasks", 0, "PLU checks", {"tasks_completed": completed, "tasks_total": completed + sum(pending.values())})
         run_task(assignment_id)
         completed += 1
         # Verify server state; allow a short delay for task bookkeeping.
@@ -197,7 +197,7 @@ def complete_assigned_tasks(run_task, emit_progress):
         else:
             raise AssignedTaskError("Assignment count did not decrease after completion")
         pending = updated
-        emit_progress("assigned_tasks", 100 if not pending else 0, "PLU Preverjanje", {"tasks_completed": completed, "tasks_total": completed + sum(pending.values())})
+        emit_progress("assigned_tasks", 100 if not pending else 0, "PLU checks", {"tasks_completed": completed, "tasks_total": completed + sum(pending.values())})
     return completed
 
 
@@ -217,30 +217,47 @@ def run_session(
     def emit_progress(stage: str, progress: float, message: str = "", extra_data: dict = None):
         check_cancelled()
         if progress_callback:
+            message_keys = {
+                "initializing": "Starting session...",
+                "checking_tasks": "Checking assigned tasks...",
+                "assigned_tasks": "PLU checks",
+                "updating_catalog": "Updating PLU catalog...",
+                "creating_session": "Creating session...",
+                "starting_execution": "Starting execution...",
+                "fetching_items": "Fetching items...",
+                "submitting_answers": "Submitting answers...",
+                "submitting_result": "Submitting score...",
+                "completed": "Completed!",
+            }
             data = {
                 "stage": stage,
                 "progress": progress,
                 "message": message,
+                **({"message_key": message_keys[stage]} if stage in message_keys else {}),
                 **(extra_data or {})
             }
+            if stage == "logging_in":
+                data.update(message_key="Signing in ({method})...", message_params={"method": method_label})
+            if stage == "error":
+                data["message_key"] = message
             progress_callback(data)
     
     try:
-        emit_progress("initializing", 0, "Začenjanje seje...")
+        emit_progress("initializing", 0, "Starting session...")
         debug_print("[PLU] Source: decrypt")
         products = DecryptedProducts()
         debug_print("Running test session...")
         
         if user_id is None:
             method_label = "Lidl SSO" if (login_method or "").lower() == "sso" else "EasyPLU"
-            emit_progress("logging_in", 10, f"Prijavljanje ({method_label})...")
+            emit_progress("logging_in", 10, f"Signing in ({method_label})...")
             user_id = login(email, password, login_method=login_method, otp_callback=otp_callback)
             debug_print(f"Logged in, user_id={user_id}")
         else:
             debug_print(f"Reusing authenticated user_id={user_id}")
 
         if execution_type == 3 and complete_tasks:
-            emit_progress("updating_catalog", 20, "Posodabljanje kataloga PLU...")
+            emit_progress("updating_catalog", 20, "Updating PLU catalog...")
             try:
                 from backend.catalog.service import refresh_catalog
                 refresh_catalog(user_id)
@@ -261,15 +278,15 @@ def run_session(
         if mode == "tasks":
             return {"user_id": user_id, "assigned_tasks_completed": tasks_completed, "tasks_only": True}
         
-        emit_progress("creating_session", 30, "Ustvarjanje seje...")
+        emit_progress("creating_session", 30, "Creating session...")
         test_session_id = create_session(execution_type=execution_type, user_id=user_id, assignment_id=assignment_id)
         
-        emit_progress("starting_execution", 40, "Zaganjanje izvajanja...")
+        emit_progress("starting_execution", 40, "Starting execution...")
         if execution_type != 5:
             start_execution(test_session_id)
             wait(1)
         
-        emit_progress("fetching_items", 50, "Pridobivanje elementov...")
+        emit_progress("fetching_items", 50, "Fetching items...")
         items = fetch_execution_items(test_session_id, execution_type=execution_type, products=products)
         if execution_type == 5:
             if not items:
@@ -283,15 +300,15 @@ def run_session(
             correct_needed = int(total_items * (target_score / 100))
             wrong_count = total_items - correct_needed
         
-        emit_progress("submitting_answers", 60, "Oddajanje odgovorov...", {"total_items": len(items), "submitted": 0})
+        emit_progress("submitting_answers", 60, "Submitting answers...", {"total_items": len(items), "submitted": 0})
         detailed_results = submit_answers(items, wrong_count=wrong_count, products=products, execution_type=execution_type, progress_callback=lambda current, total: emit_progress(
             "submitting_answers",
             60 + (current / total) * 30,
-            f"Oddajanje odgovorov: {current}/{total}",
+            f"Submitting answers: {current}/{total}",
             {"total_items": total, "submitted": current}
         ))
         
-        emit_progress("submitting_result", 90, "Oddajanje rezultata...")
+        emit_progress("submitting_result", 90, "Submitting score...")
         result_data = submit_result(test_session_id, user_id)
         
         total_items = len(detailed_results)
@@ -304,7 +321,7 @@ def run_session(
         debug_print(f"Incorrect items: {incorrect_items}")
         debug_print(f"Average score: {average_score}")
         
-        emit_progress("completed", 100, "Končano!", {
+        emit_progress("completed", 100, "Completed!", {
             "total_items": total_items,
             "correct_items": correct_items,
             "incorrect_items": incorrect_items,

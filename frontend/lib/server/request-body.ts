@@ -6,13 +6,13 @@ export class InvalidBody extends Error {
 
 export async function readJsonBody(request: Request): Promise<string> {
   if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
-    throw new InvalidBody(415, "Zahteva mora biti JSON.")
+    throw new InvalidBody(415, "Request must be JSON.")
   }
   const declared = request.headers.get("content-length")
   if (declared && (!/^\d+$/.test(declared) || Number(declared) > MAX_BODY_BYTES)) {
-    throw new InvalidBody(413, "Zahteva je prevelika.")
+    throw new InvalidBody(413, "Request body is too large.")
   }
-  if (!request.body) throw new InvalidBody(400, "Manjkajo podatki zahteve.")
+  if (!request.body) throw new InvalidBody(400, "Request body is missing.")
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
@@ -23,12 +23,12 @@ export async function readJsonBody(request: Request): Promise<string> {
       const result = await Promise.race([
         reader.read(),
         new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => reject(new InvalidBody(408, "Čas pošiljanja je potekel.")), Math.max(0, deadline - Date.now()))
+          timeout = setTimeout(() => reject(new InvalidBody(408, "Request body timed out.")), Math.max(0, deadline - Date.now()))
         }),
       ]).finally(() => clearTimeout(timeout))
       if (result.done) break
       size += result.value.byteLength
-      if (size > MAX_BODY_BYTES) throw new InvalidBody(413, "Zahteva je prevelika.")
+      if (size > MAX_BODY_BYTES) throw new InvalidBody(413, "Request body is too large.")
       chunks.push(result.value)
     }
   } catch (error) {
@@ -46,6 +46,6 @@ export async function readJsonBody(request: Request): Promise<string> {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error()
     return text
   } catch {
-    throw new InvalidBody(400, "Neveljavni podatki zahteve.")
+    throw new InvalidBody(400, "Invalid request data.")
   }
 }

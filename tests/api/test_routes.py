@@ -1,12 +1,13 @@
 """Exercise middleware and routing without a live server or upstream accounts."""
 import asyncio
+import json
 import unittest
 from unittest.mock import patch
 
 from backend import app as application
 
 
-async def request(path, headers=()):
+async def request_response(path, headers=()):
     messages = []
     delivered = False
 
@@ -25,7 +26,13 @@ async def request(path, headers=()):
              "query_string": b"", "root_path": "", "headers": list(headers),
              "client": ("127.0.0.1", 1234), "server": ("localhost", 8000)}
     await application.app(scope, receive, send)
-    return next(message["status"] for message in messages if message["type"] == "http.response.start")
+    status = next(message["status"] for message in messages if message["type"] == "http.response.start")
+    body = b"".join(message.get("body", b"") for message in messages if message["type"] == "http.response.body")
+    return status, json.loads(body) if body else None
+
+
+async def request(path, headers=()):
+    return (await request_response(path, headers))[0]
 
 
 class RouteTests(unittest.IsolatedAsyncioTestCase):
@@ -41,6 +48,13 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as rejected:
             get_schedule(Request({"type": "http", "headers": []}))
         self.assertEqual(rejected.exception.status_code, 403)
+
+    async def test_api_errors_stay_english_regardless_of_language(self):
+        from starlette.requests import Request
+        for locale in ("en", "sl"):
+            request = Request({"type": "http", "headers": [(b"accept-language", locale.encode())]})
+            response = await application.invalid_request(request, None)
+            self.assertEqual(json.loads(response.body)["detail"], "Invalid request data.")
 
     def test_endpoint_contract_survives_reorganization(self):
         paths = application.app.openapi()["paths"]

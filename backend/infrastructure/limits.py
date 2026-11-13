@@ -25,9 +25,9 @@ class JobLimiter:
             history = self.starts.get(ip, deque())
             if len(history) >= self.starts_per_minute:
                 retry = max(1, int(60 - (now - history[0])) + 1)
-                raise HTTPException(429, "Preveč zagonov. Poskusite čez minuto.", headers={"Retry-After": str(retry)})
+                raise HTTPException(429, "Too many starts. Please try again in a minute.", headers={"Retry-After": str(retry)})
             if self.active >= self.max_active or len(self.starts) >= 10000 and ip not in self.starts:
-                raise HTTPException(429, "Strežnik je zaseden. Poskusite pozneje.", headers={"Retry-After": "10"})
+                raise HTTPException(429, "The server is busy. Please try again later.", headers={"Retry-After": "10"})
             history.append(now)
             self.starts[ip] = history
             self.active += 1
@@ -48,7 +48,7 @@ pdf_limiter = JobLimiter(max_active=1, starts_per_minute=10)
 
 
 class SmsLimiter:
-    def __init__(self, per_minute=None, message="Preveč SMS zahtev. Poskusite čez minuto."):
+    def __init__(self, per_minute=None, message="Too many SMS requests. Please try again in a minute."):
         self.message = message
         self.per_minute = per_minute if per_minute is not None else max(1, int(os.getenv("SMS_SUBMISSIONS_PER_MINUTE", "10")))
         self.history = {}

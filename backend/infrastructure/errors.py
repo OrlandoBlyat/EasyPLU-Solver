@@ -19,19 +19,19 @@ class AssignedTaskError(Exception):
 
 def client_error(error):
     if isinstance(error, AssignedTaskError):
-        return "Dodeljenih nalog ni bilo mogoče potrditi. Preverite naloge v easyPLU in poskusite znova."
+        return "Could not confirm assigned tasks. Check them in easyPLU and try again."
     if isinstance(error, PluDecryptionError):
-        return "PLU številke ni bilo mogoče dešifrirati. Preverite podatke in nastavitev vira PLU."
+        return "Could not decrypt the PLU number. Check the data and PLU source setting."
     if isinstance(error, EasyPluAuthenticationError):
-        return "Napačen e-naslov ali geslo. Preverite podatke za easyPLU."
+        return "Incorrect email or password. Check your easyPLU credentials."
     if isinstance(error, SsoAuthenticationError):
-        return "Napačna globalna številka ali geslo. Preverite podatke za Lidl SSO."
+        return "Incorrect global number or password. Check your Lidl SSO credentials."
     if isinstance(error, requests.HTTPError):
         status = error.response.status_code if error.response is not None else None
         if status in (401, 403):
-            return "Prijava ali dostop ni uspel. Preverite prijavne podatke."
+            return "Sign-in or access failed. Check your credentials."
     if isinstance(error, (TimeoutError, requests.Timeout)):
-        return "Čas čakanja je potekel. Poskusite znova."
+        return "The request timed out. Please try again."
     if isinstance(error, requests.ConnectionError):
-        return "Povezava s storitvijo ni uspela. Poskusite znova."
-    return "Testa ni bilo mogoče zaključiti. Poskusite znova."
+        return "Could not connect to the service. Please try again."
+    return "Could not finish the test. Please try again."

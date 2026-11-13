@@ -30,7 +30,8 @@ def make_otp_callback(run_id: str, owner: str, progress_queue: Queue | None = No
             progress_queue.put({
                 "stage": "otp_required",
                 "progress": 15,
-                "message": "Vnesite SMS kodo iz Lidl prijave.",
+                "message": "Enter the SMS code from your Lidl sign-in.",
+                "message_key": "Enter the SMS code from your Lidl sign-in.",
                 "run_id": run_id,
             })
         try:
@@ -38,7 +39,7 @@ def make_otp_callback(run_id: str, owner: str, progress_queue: Queue | None = No
             while not waiter["event"].wait(timeout=0.2):
                 check_cancelled()
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("Čas za vnos SMS kode je potekel")
+                    raise TimeoutError("SMS code entry timed out")
             check_cancelled()
             if not waiter["code"]:
                 raise RuntimeError("SMS koda ni bila poslana")
@@ -57,7 +58,7 @@ def submit_otp(req: OtpRequest, request: Request):
     with otp_lock:
         waiter = otp_waiters.get(req.run_id)
         if waiter is None or not secrets.compare_digest(waiter["owner"], owner):
-            raise HTTPException(status_code=404, detail="SSO prijava ne čaka na SMS kodo")
+            raise HTTPException(status_code=404, detail="SSO sign-in is not waiting for an SMS code.")
         otp_waiters.pop(req.run_id)
         waiter["code"] = req.otp
         waiter["event"].set()
@@ -71,9 +72,9 @@ async def run_plu_session(req: SessionRequest, request: Request):
     try:
         while not ticket.try_start():
             if time.monotonic() - ticket.created >= MAX_QUEUE_SECONDS:
-                raise HTTPException(408, "Čas čakanja v vrsti je potekel. Poskusite znova.")
+                raise HTTPException(408, "Queue wait timed out. Please try again.")
             if await request.is_disconnected():
-                raise HTTPException(499, "Povezava je bila prekinjena.")
+                raise HTTPException(499, "The connection was interrupted.")
             await asyncio.sleep(0.2)
     except BaseException:
         ticket.cancel()
@@ -103,7 +104,7 @@ async def run_plu_session(req: SessionRequest, request: Request):
     try:
         while not task.done():
             if time.monotonic() >= deadline:
-                raise HTTPException(408, "Čas izvajanja testa je potekel. Poskusite znova.")
+                raise HTTPException(408, "The test timed out. Please try again.")
             if await request.is_disconnected():
                 cancel.set()
                 raise JobCancelled("Client disconnected")
@@ -112,7 +113,7 @@ async def run_plu_session(req: SessionRequest, request: Request):
     except HTTPException:
         raise
     except JobCancelled:
-        raise HTTPException(status_code=499, detail="Povezava je bila prekinjena.") from None
+        raise HTTPException(status_code=499, detail="The connection was interrupted.") from None
     except Exception as e:
         log("solver", "Session request failed:", e)
         raise HTTPException(status_code=500, detail=client_error(e)) from None
@@ -164,7 +165,8 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                 emit_progress({
                     "stage": "attempt_start",
                     "progress": 0,
-                    "message": "Pripravljam test...",
+                    "message": "Preparing test...",
+                    "message_key": "Preparing test...",
                     "attempt": attempt,
                     "user_knowledge": None
                 })
@@ -191,7 +193,8 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                 emit_progress({
                     "stage": "attempt_complete",
                     "progress": 90,
-                    "message": "Preverjam doseženo znanje...",
+                    "message": "Checking achieved knowledge...",
+                    "message_key": "Checking achieved knowledge...",
                     "attempt": attempt,
                     "user_knowledge": user_knowledge,
                     "result": result
@@ -202,7 +205,8 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                         emit_progress({
                             "stage": "final",
                             "progress": 100,
-                            "message": "Končano! Doseženo 100 % znanje.",
+                            "message": "Completed! Reached 100% knowledge.",
+                            "message_key": "Completed! Reached 100% knowledge.",
                             "attempt": attempt,
                             "user_knowledge": user_knowledge,
                             "result": result
@@ -213,7 +217,8 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                         emit_progress({
                             "stage": "retrying",
                             "progress": 95,
-                            "message": "Test se samodejno nadaljuje do 100 % znanja.",
+                            "message": "The test continues automatically until knowledge reaches 100%.",
+                            "message_key": "The test continues automatically until knowledge reaches 100%.",
                             "attempt": attempt,
                             "user_knowledge": user_knowledge
                         })
@@ -222,7 +227,8 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                     emit_progress({
                         "stage": "final",
                         "progress": 100,
-                        "message": "Končano",
+                        "message": "Completed",
+                        "message_key": "Completed",
                         "attempt": attempt,
                         "user_knowledge": user_knowledge,
                         "result": result
@@ -234,7 +240,9 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                 emit_progress({
                     "stage": "error",
                     "progress": 0,
-                    "message": f"Dosežena največja števila poskusov ({max_attempts}). Znanje: {result.get('user_knowledge', 0):.2f}%",
+                    "message": f"Maximum attempts reached ({max_attempts}). Knowledge: {result.get('user_knowledge', 0):.2f}%",
+                    "message_key": "Maximum attempts reached ({attempts}). Knowledge: {knowledge}%",
+                    "message_params": {"attempts": max_attempts, "knowledge": f"{result.get('user_knowledge', 0):.2f}"},
                     "error": "Max attempts reached"
                 })
         except JobCancelled:
@@ -243,7 +251,8 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
             message = client_error(e)
             log("solver", "Stream worker failed:", e)
             result_container["error"] = message
-            emit_progress({"stage": "error", "progress": 0, "message": message, "error": message})
+            emit_progress({"stage": "error", "progress": 0, "message": message,
+                           "message_key": message, "error": message})
         finally:
             if not cancel.is_set():
                 emit_progress(None)
@@ -257,12 +266,13 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
             while not ticket.try_start():
                 now = time.monotonic()
                 if now - ticket.created >= MAX_QUEUE_SECONDS:
-                    yield f"data: {json.dumps({'stage': 'error', 'message': 'Čas čakanja v vrsti je potekel. Poskusite znova.'})}\n\n"
+                    yield f"data: {json.dumps({'stage': 'error', 'message': 'Queue wait timed out. Please try again.', 'message_key': 'Queue wait timed out. Please try again.'})}\n\n"
                     return
                 if await request.is_disconnected():
                     return
                 if now - last_notice >= 10:
-                    notice = {"stage": "queued", "progress": 0, "message": "Ste v čakalni vrsti. Test se bo samodejno začel, ko bo na voljo prosto mesto."}
+                    notice = {"stage": "queued", "progress": 0, "message": "You are in the queue. The test will start when a slot is available.",
+                              "message_key": "You are in the queue. The test will start when a slot is available."}
                     yield f"data: {json.dumps(notice)}\n\n"
                     last_notice = now
                 await asyncio.sleep(0.2)
@@ -273,7 +283,7 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
             last_sent = time.monotonic()
             while True:
                 if time.monotonic() >= deadline:
-                    yield f"data: {json.dumps({'stage': 'error', 'message': 'Čas izvajanja testa je potekel. Poskusite znova.'})}\n\n"
+                    yield f"data: {json.dumps({'stage': 'error', 'message': 'The test timed out. Please try again.', 'message_key': 'The test timed out. Please try again.'})}\n\n"
                     break
                 try:
                     data = progress_queue.get(timeout=0.1)
@@ -296,7 +306,8 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
                     break
         except Exception as e:
             log("solver", "Progress stream failed:", e)
-            yield f"data: {json.dumps({'stage': 'error', 'message': client_error(e)})}\n\n"
+            message = client_error(e)
+            yield f"data: {json.dumps({'stage': 'error', 'message': message, 'message_key': message})}\n\n"
         finally:
             cancel.set()
             ticket.cancel()
@@ -313,5 +324,3 @@ async def run_plu_session_stream(req: SessionRequest, request: Request):
         }
     )
     return response
-
-

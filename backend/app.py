@@ -15,7 +15,7 @@ app = FastAPI(title="PLU Solver API", lifespan=lifespan)
 
 @app.exception_handler(RequestValidationError)
 async def invalid_request(request: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=422, content={"detail": "Neveljavni podatki zahteve."})
+    return JSONResponse(status_code=422, content={"detail": "Invalid request data."})
 
 
 @app.exception_handler(Exception)
