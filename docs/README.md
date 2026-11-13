@@ -16,7 +16,7 @@ Built with Next.js, TypeScript, Tailwind CSS, FastAPI, Playwright, and AES decry
 
 ## Quick start
 
-Linux installer supports Debian/Ubuntu and Fedora. It installs system prerequisites with your approval, creates `.venv`, installs Python/frontend packages and Playwright Chromium, verifies browser startup, and configures API access. Requires Python 3.10+ and Node.js 20+ (older distribution packages must be upgraded). Use `bash scripts/install.bash --no-sudo` when the package manager can install packages directly without sudo; it runs the same package commands without the sudo prefix.
+Linux installer supports Debian/Ubuntu and Fedora. It installs system prerequisites with your approval, including the venv package matching the selected Python version, creates `.venv`, installs Python/frontend packages and Playwright Chromium, verifies browser startup, and configures API access. Requires Python 3.10+ and Node.js 20+ (older distribution packages must be upgraded). Use `bash scripts/install.bash --no-sudo` when the package manager can install packages directly without sudo; it runs the same package commands without the sudo prefix. If Python reports that `ensurepip` is unavailable, install or repair the matching Debian/Ubuntu venv and wheel packages (for example, `sudo apt-get install --reinstall python3.13-venv python3-pip-whl python3-setuptools-whl` for Python 3.13), then rerun the installer.
 
 ```bash
 git clone https://github.com/OrlandoBlyat/EasyPLU-Solver.git

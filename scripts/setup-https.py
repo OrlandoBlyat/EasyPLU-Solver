@@ -79,7 +79,7 @@ def generate(settings, frontend_port, caddyfile):
     content = f"""{{
     admin off
     skip_install_trust
-    {"auto_https disable_redirects" if mode == "local" else ""}
+    {"auto_https disable_redirects" if mode in ("local", "cloudflare") else ""}
 }}
 https://{address}:{port} {{
     {tls}

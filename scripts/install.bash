@@ -58,7 +58,9 @@ fi
 if "$install_system"; then
   if command -v apt-get >/dev/null; then
     run_system apt-get update
-    run_system apt-get install -y python3 python3-venv python3-pip nodejs npm
+    run_system apt-get install -y python3 python3-venv python3-pip python3-pip-whl python3-setuptools-whl nodejs npm
+    python_venv_package="$(python3 -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}-venv")')"
+    run_system apt-get install -y "$python_venv_package"
   elif command -v dnf >/dev/null; then
     # Fedora is not an officially supported Playwright distribution. Chromium
     # pulls in native browser libraries; the browser smoke check below verifies compatibility.
@@ -79,7 +81,18 @@ done
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else "Python 3.10+ is required")'
 node -e 'if (Number(process.versions.node.split(".")[0]) < 20) { console.error("Node.js 20+ is required; upgrade Node.js and rerun."); process.exit(1) }'
 
-python3 -m venv .venv
+if ! python3 -m venv .venv; then
+  python_executable="$(command -v python3)"
+  python_version="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  echo "Could not create a pip-enabled virtual environment with $python_executable (Python $python_version)." >&2
+  if command -v apt-get >/dev/null; then
+    echo "Install or repair the matching Debian/Ubuntu venv packages, then rerun this installer:" >&2
+    echo "  sudo apt-get update && sudo apt-get install --reinstall python${python_version}-venv python3-pip-whl python3-setuptools-whl" >&2
+  elif command -v dnf >/dev/null; then
+    echo "Repair the Python venv packages with your administrator, then rerun this installer." >&2
+  fi
+  exit 1
+fi
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r backend/requirements.txt
 
