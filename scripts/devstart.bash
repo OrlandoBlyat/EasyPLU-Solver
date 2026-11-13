@@ -3,12 +3,16 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 use_https=false
 configure_https=false
+run_mode=foreground
 for argument in "$@"; do
   case "$argument" in
     --https) use_https=true ;;
     --configure-https) use_https=true; configure_https=true ;;
+    --background) run_mode=background ;;
+    --startup) run_mode=startup ;;
+    --service) run_mode=service ;;
     --help|-h)
-      echo "Usage: bash scripts/devstart.bash [--https|--configure-https]"
+      echo "Usage: bash scripts/devstart.bash [--https|--configure-https] [--background|--startup]"
       exit 0 ;;
     *) echo "Unknown option: $argument" >&2; exit 1 ;;
   esac
@@ -23,6 +27,12 @@ if "$use_https"; then
   export HTTPS_CADDYFILE="var/https/dev.Caddyfile"
   export HTTPS_LABEL="Development"
   source ./scripts/lib/https.bash
+fi
+
+if [[ "$run_mode" == background || "$run_mode" == startup ]]; then
+  service_args=("$run_mode" --development)
+  if "$use_https"; then service_args+=(--https); fi
+  exec "$python_bin" scripts/manage-service.py "${service_args[@]}"
 fi
 
 service_pids=()
