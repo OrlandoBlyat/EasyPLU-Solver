@@ -126,6 +126,11 @@ export function LoginForm({ initialApiStatus = "checking" }: { initialApiStatus?
     setRunId(null)
 
     try {
+      // The OTP submission is a second request while the session stream is
+      // still open. Set its owner cookie before creating that stream.
+      const sessionResponse = await fetch("/api/backend/session", { method: "POST" })
+      if (!sessionResponse.ok) throw new Error(t("Error connecting to the server"))
+
       const response = await fetch("/api/backend/run-session-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
